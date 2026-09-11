@@ -1856,10 +1856,17 @@ index 07a3b5b..657b6a2 100644
  }
  #endif
 diff --git a/fs/stat.c b/fs/stat.c
-index 298eb77..1c602bf 100644
+index 298eb77668a7..9dfe003f29e0 100644
 --- a/fs/stat.c
 +++ b/fs/stat.c
-@@ -21,6 +21,11 @@
+@@ -17,10 +17,18 @@
+ #include <linux/syscalls.h>
+ #include <linux/pagemap.h>
+ #include <linux/compat.h>
++#ifdef CONFIG_KSU_SUSFS
++#include <linux/susfs_def.h>
++#endif
+ 
  #include <linux/uaccess.h>
  #include <asm/unistd.h>
  
