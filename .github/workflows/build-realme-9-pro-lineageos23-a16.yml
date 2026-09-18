@@ -133,6 +133,9 @@ jobs:
           echo "[+] Kernel commit:"
           git -C "$kernel_dir" rev-parse HEAD
 
+      - name: Compilation environment preparation
+        uses: ./.github/workflows/build-env
+
       - name: Prepare KernelSU
         shell: bash
         run: |
@@ -157,24 +160,6 @@ jobs:
 
           echo "[+] KernelSU prepared successfully."
           git -C "$ksu_dir" rev-parse HEAD
-
-      - name: Verify KernelSU layout
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          kernel_dir="$GITHUB_WORKSPACE/device_kernel"
-          ksu_dir="$kernel_dir/KernelSU"
-
-          test -f "$kernel_dir/Makefile"
-          test -d "$ksu_dir"
-          test -f "$ksu_dir/kernel/Makefile"
-
-          ls -la "$ksu_dir"
-          ls -la "$ksu_dir/kernel"
-
-      - name: Compilation environment preparation
-        uses: ./.github/workflows/build-env
 
       - name: Get necessary tools
         uses: ./.github/workflows/build-ready
