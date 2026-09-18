@@ -1,81 +1,139 @@
-name: 'Preparation for the official start of the compilation steps.'
+name: Build Realme 9 Pro (LineageOS 23.2 A16)
 
-runs:
-  using: 'composite'
+on:
+  workflow_call:
+  workflow_dispatch:
 
-  steps:
+env:
+  DEVICE_NAME: "realme_9_pro"
+  DEVICE_CODENAME: "oscar"
 
-      # ============================================================
-      # Get Kernel
-      # ============================================================
+  CUSTOM_CMDS: "CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu-"
+  EXTRA_CMDS: "LLVM=1 LLVM_IAS=1"
 
-      - name: Get Kernel
+  KERNEL_SOURCE: "https://github.com/LineageOS/android_kernel_realme_sm6375.git"
+  KERNEL_BRANCH: "lineage-23.2"
+
+  CLANG_SOURCE: "https://github.com/bachnxuan/aosp_clang_mirror/releases/download/clang-r563880c-13989888/clang-r563880c.tar.gz"
+  CLANG_BRANCH: "lineage-20.0"
+
+  GCC_GNU: false
+
+  GCC_64_SOURCE: "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9.git"
+  GCC_64_BRANCH: "android12L-release"
+
+  GCC_32_SOURCE: "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9.git"
+  GCC_32_BRANCH: "android12L-release"
+
+  DEFCONFIG_SOURCE: ""
+  DEFCONFIG_NAME: "vendor/holi-qgki_defconfig"
+  DEFCONFIG_ORIGIN_IMAGE: ""
+  DEFCONFIG_FROM_BOOT: false
+
+  # KernelSU
+  KERNELSU_SOURCE: "https://github.com/KernelSU-Next/KernelSU-Next.git"
+  KERNELSU_BRANCH: "legacy"
+  KERNELSU_AUTO_GET: "false"
+  KERNELSU_AUTO_FORK: "false"
+  KERNELSU_METHOD: "shell"
+  KERNELSU_SUS_PATCH: "false"
+
+  # SUSFS
+  SUSFS_ENABLE: true
+  SUSFS_FIXED: true
+  PATCHES_SOURCE: "Josh19-git/NonGKI_Kernel_Patches"
+  PATCHES_BRANCH: "common-5.4"
+  SUSFS_FOLDER_FIXED: "common"
+  SUSFS_PATCH_FIXED: "susfs_fix_fdc"
+
+  # AnyKernel3
+  AK3_SOURCE: "https://github.com/osm0sis/AnyKernel3.git"
+  AK3_BRANCH: "master"
+  AK3_COMMIT: "dca9dc370838d919d56c1f59ec78b27a14a72c68"
+
+  BOOT_SOURCE: ""
+  NEED_DTBO: false
+  NEED_SAFE_DTBO: false
+
+  # Packaging
+  ROM_TEXT: "lineageos_a16"
+  PYTHON_VERSION: "3"
+  PACK_METHOD: "Anykernel3"
+  PACK_KMODULES: "false"
+
+  # Kernel features
+  REKERNEL_ENABLE: "false"
+  DROIDSPACES_ENABLE: "true"
+  NOMOUNT_ENABLE: "false"
+  VPNHIDE_ENABLE: "true"
+  HOOK_METHOD: "syscall"
+  KERNEL_PATCH: "false"
+
+  # KPM
+  KPM_ENABLE: "false"
+  KPM_INLINE: "false"
+  KPM_KPATCH_NEXT: "false"
+  KPM_PATCH_SOURCE: "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU_patch/refs/heads/main/kpm/patch_linux"
+
+  # Baseband Guard
+  BASEBAND_GUARD_ENABLE: "true"
+  BASEBAND_GUARD_BOOT: "false"
+
+  # DTB
+  GENERATE_DTB: "false"
+  GENERATE_CHIP: "qcom"
+  CUSTOM_DTB: "false"
+  DTB_NAME: "yupik"
+
+  # Build configuration
+  BUILD_DEBUGGER: "false"
+  SKIP_PATCH: "false"
+  BUILD_OTHER_CONFIG: "true"
+  MERGE_CONFIG_FILES: "vendor/debugfs.config,vendor/holi_QGKI.config"
+  FREE_MORE_SPACE: "false"
+
+jobs:
+  build-kernel:
+    name: Realme 9 Pro (LineageOS 23.2 A16)
+    runs-on: ubuntu-latest
+
+    env:
+      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_HARDLINK: "true"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Clone kernel source
         shell: bash
         run: |
           set -euxo pipefail
 
           kernel_dir="$GITHUB_WORKSPACE/device_kernel"
 
-          echo "::group::[+] Validate kernel source"
+          rm -rf "$kernel_dir"
 
-          if [[ ! -d "$kernel_dir" ]]; then
-            echo "::error::Kernel source directory is missing: $kernel_dir"
-            exit 1
-          fi
+          git clone \
+            --recursive \
+            --depth=1 \
+            --single-branch \
+            --branch "$KERNEL_BRANCH" \
+            "$KERNEL_SOURCE" \
+            "$kernel_dir"
 
-          if [[ ! -f "$kernel_dir/Makefile" ]]; then
-            echo "::error::Kernel source is invalid: $kernel_dir"
-            exit 1
-          fi
+          test -d "$kernel_dir"
+          test -f "$kernel_dir/Makefile"
 
           echo "[+] Kernel source: $kernel_dir"
+          echo "[+] Kernel branch:"
+          git -C "$kernel_dir" branch --show-current
 
-          cd "$kernel_dir"
+          echo "[+] Kernel commit:"
+          git -C "$kernel_dir" rev-parse HEAD
 
-          KERNEL_VERSION=$(
-            head -n 3 Makefile |
-            grep -E 'VERSION|PATCHLEVEL' |
-            awk '{print $3}' |
-            paste -sd '.'
-          )
-
-          echo "[+] Kernel version: $KERNEL_VERSION"
-
-          echo "KERNEL_VERSION=$KERNEL_VERSION" >> "$GITHUB_ENV"
-          echo "FIRST_VERSION=$(echo "$KERNEL_VERSION" | awk -F '.' '{print $1}')" >> "$GITHUB_ENV"
-          echo "SECOND_VERSION=$(echo "$KERNEL_VERSION" | awk -F '.' '{print $2}')" >> "$GITHUB_ENV"
-
-          echo "::endgroup::"
-
-
-      # ============================================================
-      # Get Kernel Arch
-      # ============================================================
-
-      - name: Get Kernel Arch
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          kernel_dir="$GITHUB_WORKSPACE/device_kernel"
-
-          if [[ -d "$kernel_dir/arch/arm64/configs" ]]; then
-            echo "KERNEL_ARCH=arm64" >> "$GITHUB_ENV"
-            echo "[+] Kernel architecture: arm64"
-          else
-            echo "[-] Non-ARM64 devices are not supported!"
-            exit 1
-          fi
-
-
-      # ============================================================
-      # Validate manually prepared KernelSU
-      #
-      # KERNELSU_AUTO_GET=false means this action must NOT download,
-      # clone, replace, or delete the KernelSU checkout.
-      # ============================================================
-
-      - name: Validate KernelSU
+      - name: Prepare KernelSU
         shell: bash
         run: |
           set -euxo pipefail
@@ -83,577 +141,319 @@ runs:
           kernel_dir="$GITHUB_WORKSPACE/device_kernel"
           ksu_dir="$kernel_dir/KernelSU"
 
-          echo "::group::[+] Validate KernelSU checkout"
+          test -f "$kernel_dir/Makefile"
 
-          if [[ ! -d "$kernel_dir" ]]; then
-            echo "::error::Kernel source directory is missing: $kernel_dir"
+          rm -rf "$ksu_dir"
+
+          git clone \
+            --depth=1 \
+            --single-branch \
+            --branch "$KERNELSU_BRANCH" \
+            "$KERNELSU_SOURCE" \
+            "$ksu_dir"
+
+          test -d "$ksu_dir"
+          test -f "$ksu_dir/kernel/Makefile"
+
+          echo "[+] KernelSU prepared successfully."
+          echo "[+] KernelSU commit:"
+          git -C "$ksu_dir" rev-parse HEAD
+
+      - name: Verify KernelSU layout
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          kernel_dir="$GITHUB_WORKSPACE/device_kernel"
+          ksu_dir="$kernel_dir/KernelSU"
+
+          test -f "$kernel_dir/Makefile"
+          test -d "$ksu_dir"
+          test -f "$ksu_dir/kernel/Makefile"
+
+          ls -la "$ksu_dir"
+          ls -la "$ksu_dir/kernel"
+
+      - name: Compilation environment preparation
+        uses: ./.github/workflows/build-env
+
+      - name: Get necessary tools
+        uses: ./.github/workflows/build-ready
+
+      - name: Verify KernelSU after build-ready
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          kernel_dir="$GITHUB_WORKSPACE/device_kernel"
+          ksu_dir="$kernel_dir/KernelSU"
+
+          test -d "$ksu_dir"
+          test -f "$ksu_dir/kernel/Makefile"
+
+          if [[ ! -e "$kernel_dir/drivers/kernelsu" ]]; then
+            echo "::error::drivers/kernelsu is missing"
             exit 1
           fi
 
-          if [[ ! -f "$kernel_dir/Makefile" ]]; then
-            echo "::error::Kernel source is invalid: $kernel_dir"
-            exit 1
-          fi
-
-          if [[ ! -d "$ksu_dir" ]]; then
-            echo "::error::KernelSU checkout is missing: $ksu_dir"
-            exit 1
-          fi
-
-          if [[ ! -f "$ksu_dir/kernel/Makefile" ]]; then
-            echo "::error::KernelSU checkout is missing or invalid: $ksu_dir"
-            echo "::error::Expected: $ksu_dir/kernel/Makefile"
-
-            echo "::group::KernelSU contents"
-            find "$ksu_dir" -maxdepth 2 -type f | sort || true
-            echo "::endgroup::"
-
-            exit 1
-          fi
-
-          echo "[+] KernelSU checkout:"
+          echo "[+] KernelSU directory:"
           echo "    $ksu_dir"
 
           echo "[+] KernelSU commit:"
           git -C "$ksu_dir" rev-parse --short HEAD
 
-          echo "[+] KernelSU branch:"
-          git -C "$ksu_dir" branch --show-current || true
+          ls -ld "$kernel_dir/drivers/kernelsu"
 
-          echo "::endgroup::"
+      - name: Patch Kernel of SUSFS
+        uses: ./.github/workflows/patch-susfs
 
+      - name: Patch for no-kprobe
+        uses: ./.github/workflows/patch-no-kprobe
 
-      # ============================================================
-      # Get Packing Tools
-      # ============================================================
-
-      - name: Get Packing Tools
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          cd "$GITHUB_WORKSPACE/device_kernel"
-
-          if [[ "${{ env.PACK_METHOD }}" == "Anykernel3" ]]; then
-
-            if [[ -d "Anykernel3" ]]; then
-              echo "[+] Found AnyKernel3 in Kernel!"
-
-            elif [[ "${{ env.AK3_SOURCE }}" == *"osm0sis/AnyKernel3.git" ]]; then
-
-              git clone \
-                "${{ env.AK3_SOURCE }}" \
-                -b "${{ env.AK3_BRANCH }}" \
-                Anykernel3 \
-                --depth=1
-
-              cd Anykernel3
-
-              git checkout dca9dc370838d919d56c1f59ec78b27a14a72c68
-
-              cd ../
-
-              echo "[+] Get Anykernel3 successfully!"
-
-            else
-
-              git clone \
-                "${{ env.AK3_SOURCE }}" \
-                -b "${{ env.AK3_BRANCH }}" \
-                Anykernel3 \
-                --depth=1
-
-            fi
-
-          elif [[ "${{ env.PACK_METHOD }}" == "MKBOOTIMG" ]] || \
-               [[ "${{ env.DEFCONFIG_FROM_BOOT }}" == "true" ]]; then
-
-            cd "$GITHUB_WORKSPACE"
-
-            git clone \
-              https://android.googlesource.com/platform/system/tools/mkbootimg \
-              "$GITHUB_WORKSPACE/mkboottools" \
-              -b main-kernel-build-2024 \
-              --depth=1
-
-            ${{ env.CURLX }} \
-              "${{ env.BOOT_SOURCE }}" \
-              "$GITHUB_WORKSPACE/boot_source_${{ env.DEVICE_NAME }}.img"
-
-            echo "[+] Get MKBOOTIMG successfully!"
-
-            cd "$GITHUB_WORKSPACE/device_kernel"
-
-          else
-
-            echo "[-] Need packing method!"
-            exit 1
-
-          fi
-
-          echo "PACK_METHOD=${{ env.PACK_METHOD }}" >> "$GITHUB_ENV"
-
-
-      # ============================================================
-      # Get DEFCONFIG
-      # ============================================================
-
-      - name: Get DEFCONFIG
-        if: env.DEFCONFIG_SOURCE != '' || env.DEFCONFIG_FROM_BOOT == 'true'
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          cd "$GITHUB_WORKSPACE/device_kernel"
-
-          if [[ -n "${{ env.DEFCONFIG_SOURCE }}" ]]; then
-
-            ${{ env.CURLX }} \
-              "${{ env.DEFCONFIG_SOURCE }}" \
-              "arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
-
-          elif [[ -z "${{ env.DEFCONFIG_ORIGIN_IMAGE }}" ]]; then
-
-            if [[ "${{ env.DEFCONFIG_FROM_BOOT }}" == "true" ]]; then
-
-              if [[ -f "${{ env.BOOT_SOURCE }}" ]]; then
-
-                ${{ env.CURLX }} \
-                  "${{ env.BOOT_SOURCE }}" \
-                  "$GITHUB_WORKSPACE/boot.img"
-
-                "$GITHUB_WORKSPACE/mkboottools/unpack_bootimg.py" \
-                  --boot_img "$GITHUB_WORKSPACE/boot.img"
-
-                mv \
-                  "$GITHUB_WORKSPACE/out/kernel" \
-                  "$GITHUB_WORKSPACE/device_kernel/Image"
-
-                "$GITHUB_WORKSPACE/device_kernel/scripts/extract-ikconfig" \
-                  "$GITHUB_WORKSPACE/device_kernel/Image" \
-                  > "$GITHUB_WORKSPACE/device_kernel/arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
-
-              fi
-
-            else
-
-              ${{ env.CURLX }} \
-                "${{ env.DEFCONFIG_ORIGIN_IMAGE }}" \
-                "$GITHUB_WORKSPACE/device_kernel/Image"
-
-              "$GITHUB_WORKSPACE/device_kernel/scripts/extract-ikconfig" \
-                "$GITHUB_WORKSPACE/device_kernel/Image" \
-                > "$GITHUB_WORKSPACE/device_kernel/arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
-
-            fi
-
-          fi
-
-
-      # ============================================================
-      # Clean KernelSU and Hook
-      # ============================================================
-
-      - name: Cleaned KernelSU and Hook
+      - name: Extra Kernel Options
         shell: bash
         run: |
           set -euxo pipefail
 
           kernel_dir="$GITHUB_WORKSPACE/device_kernel"
-
           cd "$kernel_dir"
 
-          echo "::group::[+] Starting clean hook"
+          test -f /tmp/Patches/Patch/remove_modversion_check.patch
+          test -f /tmp/Patches/Patch/add_automatic_dtbo_generation.patch
 
-          cp /tmp/Bin/clean_hook.sh ./
+          cp /tmp/Patches/Patch/remove_modversion_check.patch .
+          cp /tmp/Patches/Patch/add_automatic_dtbo_generation.patch .
 
-          bash clean_hook.sh
+          patch -p1 < remove_modversion_check.patch || true
+          patch -p1 < add_automatic_dtbo_generation.patch || true
 
-          echo "::endgroup::"
+      - name: Patch Kernel of ReKernel
+        uses: ./.github/workflows/patch-rekernel
 
-          echo "[+] Cleaned hook."
+      - name: Patch Kernel of DroidSpaces
+        uses: ./.github/workflows/patch-droidspaces
 
+      - name: Patch Kernel of VPNHide
+        uses: ./.github/workflows/patch-vpnhide
 
-      # ============================================================
-      # KernelSU
-      #
-      # IMPORTANT:
-      #
-      # KERNELSU_AUTO_GET=false
-      #
-      # Therefore this section ONLY validates and connects the
-      # existing checkout created by Prepare KernelSU.
-      #
-      # It NEVER clones KernelSU.
-      # It NEVER deletes KernelSU.
-      # It NEVER runs KernelSU setup.sh.
-      # ============================================================
+      - name: Patch Kernel of Baseband Guard
+        uses: ./.github/workflows/patch-baseband-guard
 
-      - name: Set KernelSU
+      - name: Patch Kernel of NoMount
+        uses: ./.github/workflows/patch-nomount
+
+      - name: Build Process
+        uses: ./.github/workflows/build-process
+
+      - name: Validate build output
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          image_dir="$GITHUB_WORKSPACE/device_kernel/out/arch/arm64/boot"
+
+          test -d "$image_dir"
+
+          if [[ ! -f "$image_dir/Image.gz-dtb" ]] &&
+             [[ ! -f "$image_dir/Image.gz" ]] &&
+             [[ ! -f "$image_dir/Image" ]]; then
+            echo "::error::No supported kernel image was produced"
+            exit 1
+          fi
+
+      - name: Checkout pinned AnyKernel3
+        if: env.PACK_METHOD == 'Anykernel3'
         shell: bash
         run: |
           set -euxo pipefail
 
           kernel_dir="$GITHUB_WORKSPACE/device_kernel"
-          ksu_dir="$kernel_dir/KernelSU"
+          ak3_dir="$kernel_dir/Anykernel3"
 
-          echo "::group::[+] KernelSU configuration"
+          rm -rf "$ak3_dir"
 
-          KERNELSU_AUTO_GET="${{ env.KERNELSU_AUTO_GET }}"
-          KERNELSU_AUTO_FORK="${{ env.KERNELSU_AUTO_FORK }}"
+          echo "[+] Cloning AnyKernel3 without checking out the branch tip..."
 
-          echo "[+] KERNELSU_AUTO_GET=$KERNELSU_AUTO_GET"
-          echo "[+] KERNELSU_AUTO_FORK=$KERNELSU_AUTO_FORK"
+          git clone \
+            --filter=blob:none \
+            --no-checkout \
+            --no-tags \
+            "$AK3_SOURCE" \
+            "$ak3_dir"
 
-          # --------------------------------------------------------
-          # Automatic KernelSU retrieval is disabled.
-          # --------------------------------------------------------
+          cd "$ak3_dir"
 
-          if [[ "${KERNELSU_AUTO_GET,,}" != "true" ]]; then
+          echo "[+] Fetching pinned AnyKernel3 commit:"
+          echo "    $AK3_COMMIT"
 
-            echo "[+] Automatic KernelSU retrieval disabled."
-            echo "[+] Reusing existing checkout."
+          git fetch \
+            --no-tags \
+            --depth=1 \
+            origin \
+            "$AK3_COMMIT"
 
-            if [[ ! -d "$ksu_dir" ]]; then
-              echo "::error::KernelSU directory is missing: $ksu_dir"
-              exit 1
-            fi
+          git checkout --detach "$AK3_COMMIT"
 
-            if [[ ! -f "$ksu_dir/kernel/Makefile" ]]; then
-              echo "::error::KernelSU checkout is missing or invalid: $ksu_dir"
-              echo "::error::Expected: $ksu_dir/kernel/Makefile"
+          test -f anykernel.sh
+          test "$(git rev-parse HEAD)" = "$AK3_COMMIT"
 
-              echo "::group::KernelSU contents"
-              find "$ksu_dir" -maxdepth 2 -type f | sort || true
-              echo "::endgroup::"
+          echo "[+] AnyKernel3 checkout verified."
+          git rev-parse HEAD
 
-              exit 1
-            fi
-
-            echo "[+] KernelSU checkout is valid."
-
-            echo "KERNELSU_NAME=KernelSU-Next" >> "$GITHUB_ENV"
-            echo "KERNELSU_FOLDER=KernelSU" >> "$GITHUB_ENV"
-
-          else
-
-            echo "::error::Automatic KernelSU retrieval must remain disabled."
-            echo "::error::Set KERNELSU_AUTO_GET to false when using Prepare KernelSU."
-            exit 1
-
-          fi
-
-          # --------------------------------------------------------
-          # Always use the exact downstream-compatible path.
-          # --------------------------------------------------------
-
-          if [[ ! -d "$ksu_dir/kernel" ]]; then
-            echo "::error::KernelSU kernel directory is missing:"
-            echo "::error::$ksu_dir/kernel"
-            exit 1
-          fi
-
-          # --------------------------------------------------------
-          # Create/update the expected kernel integration link.
-          # --------------------------------------------------------
-
-          ln -sfn \
-            "../KernelSU/kernel" \
-            "$kernel_dir/drivers/kernelsu"
-
-          if [[ ! -e "$kernel_dir/drivers/kernelsu" ]]; then
-            echo "::error::Failed to create drivers/kernelsu"
-            exit 1
-          fi
-
-          echo "[+] KernelSU path:"
-          echo "    $ksu_dir"
-
-          echo "[+] KernelSU integration:"
-          echo "    $kernel_dir/drivers/kernelsu"
-
-          echo "::endgroup::"
-
-
-      # ============================================================
-      # Ensure KernelSU is present in Kconfig/Makefile
-      # ============================================================
-
-      - name: Configure KernelSU integration
+      - name: Package AnyKernel3
+        if: env.PACK_METHOD == 'Anykernel3'
         shell: bash
         run: |
           set -euxo pipefail
 
           kernel_dir="$GITHUB_WORKSPACE/device_kernel"
-          ksu_dir="$kernel_dir/KernelSU"
+          ak3_dir="$kernel_dir/Anykernel3"
+          image_dir="$kernel_dir/out/arch/arm64/boot"
+          tmp_dir="$kernel_dir/tmp"
+          timestamp="$(date +"%Y%m%d%H%M%S")"
 
-          if [[ ! -f "$ksu_dir/kernel/Makefile" ]]; then
-            echo "::error::KernelSU checkout is missing or invalid: $ksu_dir"
-            exit 1
-          fi
+          test -d "$ak3_dir"
+          test -f "$ak3_dir/anykernel.sh"
 
-          cd "$kernel_dir"
+          rm -rf "$tmp_dir"
+          mkdir -p "$tmp_dir"
 
-          # drivers/Makefile
-          if ! grep -q 'obj-$(CONFIG_KSU) += kernelsu/' \
-              "$kernel_dir/drivers/Makefile"; then
+          echo "[+] Verifying AnyKernel3 revision..."
+          test "$(git -C "$ak3_dir" rev-parse HEAD)" = "$AK3_COMMIT"
 
-            printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' \
-              >> "$kernel_dir/drivers/Makefile"
-
-          fi
-
-          # drivers/Kconfig
-          if ! grep -q 'source "drivers/kernelsu/Kconfig"' \
-              "$kernel_dir/drivers/Kconfig"; then
+          if [[ "$AK3_SOURCE" == *"osm0sis"* ]]; then
+            sed -i \
+              's/ExampleKernel by osm0sis @ xda-developers/NonGKI Kernel Build by JackAltman @ Github/g' \
+              "$ak3_dir/anykernel.sh"
 
             sed -i \
-              '/endmenu/i\source "drivers/kernelsu/Kconfig"' \
-              "$kernel_dir/drivers/Kconfig"
+              's/do.devicecheck=1/do.devicecheck=0/g' \
+              "$ak3_dir/anykernel.sh"
 
+            sed -i \
+              's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=auto;!g' \
+              "$ak3_dir/anykernel.sh"
+
+            sed -i \
+              's/IS_SLOT_DEVICE=0;/is_slot_device=auto;/g' \
+              "$ak3_dir/anykernel.sh"
+
+            echo "[+] Using official AnyKernel3."
           fi
 
-          echo "[+] KernelSU integration configured."
+          if [[ -f "$image_dir/Image.gz-dtb" ]]; then
+            cp -fp "$image_dir/Image.gz-dtb" "$tmp_dir/"
+            echo "[+] Found Image.gz-dtb."
 
+          elif [[ -f "$image_dir/Image.gz" ]]; then
+            cp -fp "$image_dir/Image.gz" "$tmp_dir/"
+            echo "[+] Found Image.gz."
 
-      # ============================================================
-      # SukiSU-Ultra Fixed
-      # ============================================================
-
-      - name: SukiSU-Ultra Fixed
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          ksu_dir="$GITHUB_WORKSPACE/device_kernel/KernelSU"
-
-          if [[ ! -d "$ksu_dir" ]]; then
-            echo "::error::KernelSU directory is missing: $ksu_dir"
-            exit 1
-          fi
-
-          if [[ ! -f "$ksu_dir/kernel/Makefile" ]]; then
-            echo "::error::Invalid KernelSU checkout: $ksu_dir"
-            exit 1
-          fi
-
-          if [[ "${{ env.KERNELSU_SOURCE }}" == *SukiSU* ]] || \
-             [[ "${{ env.KERNELSU_AUTO_FORK }}" == "sukisu" ]]; then
-
-            cd "$ksu_dir/kernel"
-
-            if [[ -f "/tmp/Patches/Patch/sukisu_ultra_fixed.patch" ]]; then
-
-              cp \
-                /tmp/Patches/Patch/sukisu_ultra_fixed.patch \
-                ./
-
-              patch -p1 < sukisu_ultra_fixed.patch
-
-              echo "[+] SukiSU-Ultra mitigation measures implemented."
-
-            else
-
-              echo "[-] SukiSU patch not found, skipped."
-
-            fi
+          elif [[ -f "$image_dir/Image" ]]; then
+            cp -fp "$image_dir/Image" "$tmp_dir/"
+            echo "[+] Found Image."
 
           else
-
-            echo "[-] Your KernelSU fork doesn't need this, skipped."
-
-          fi
-
-
-      # ============================================================
-      # xxksu add SuSFS
-      # ============================================================
-
-      - name: xxksu add SuSFS
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          ksu_dir="$GITHUB_WORKSPACE/device_kernel/KernelSU"
-
-          if [[ ! -d "$ksu_dir" ]]; then
-            echo "::error::KernelSU directory is missing: $ksu_dir"
+            echo "::error::Could not find a kernel image."
             exit 1
           fi
 
-          if [[ ! -f "$ksu_dir/kernel/Makefile" ]]; then
-            echo "::error::Invalid KernelSU checkout: $ksu_dir"
-            exit 1
-          fi
-
-          if [[ "${{ env.KERNELSU_AUTO_FORK }}" == "xxksu" ]] || \
-             [[ "${{ env.KERNELSU_SOURCE }}" == *backslashxx* ]]; then
-
-            if [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
-
-              cd "$ksu_dir/kernel"
-
-              patch -p1 < <(
-                curl -sL \
-                  "https://github.com/midori01/KernelSU/commit/xx.patch"
-              ) || true
-
-              echo "[+] xxksu SUSFS applied."
-
-            fi
-
+          if [[ -f "$image_dir/dtbo.img" ]]; then
+            cp -fp "$image_dir/dtbo.img" "$tmp_dir/"
+            echo "[+] Found dtbo.img."
           else
-
-            echo "[-] Your KernelSU fork doesn't need this, skipped."
-
+            echo "[+] dtbo.img not found; continuing."
           fi
 
+          if [[ -f "$image_dir/dtb.img" ]]; then
+            cp -fp "$image_dir/dtb.img" "$tmp_dir/dtb"
+            echo "[+] Found dtb.img."
 
-      # ============================================================
-      # KPM Function Support
-      # ============================================================
+          elif [[ -f "$image_dir/dtb" ]]; then
+            cp -fp "$image_dir/dtb" "$tmp_dir/"
+            echo "[+] Found dtb."
 
-      - name: KPM Function Support
-        if: env.KPM_ENABLE == 'true'
-        shell: bash
-        run: |
-          set -euxo pipefail
+          elif [[ "$GENERATE_DTB" == "true" ]]; then
+            dtb_path=""
 
-          cd "$GITHUB_WORKSPACE/device_kernel"
-
-          ENABLE_KPM_CONFIGS(){
-
-            sed -n \
-              '/^config KALLSYMS_ALL/,/^[^ \t]/p' \
-              init/Kconfig |
-              grep -q 'depends on.*DEBUG_KERNEL' &&
-              echo "CONFIG_DEBUG_KERNEL=y" \
-                >> "./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
-
-            echo "CONFIG_KALLSYMS=y" \
-              >> "./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
-
-            echo "CONFIG_KALLSYMS_ALL=y" \
-              >> "./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
-
-          }
-
-
-          GET_KPM_TOOLS(){
-
-            echo "[+] Detected set_memory."
-
-            echo "CONFIG_KPM=y" \
-              >> "./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
-
-            ${{ env.CURLX }} \
-              "${{ env.KPM_PATCH_SOURCE }}" \
-              patch
-
-            if [[ -f "patch" ]]; then
-
-              chmod a+x patch
-
-              echo "[+] Get KPM Tools successfully!"
-
+            if compgen -G "$image_dir/dts/$GENERATE_CHIP/*.dtb" > /dev/null; then
+              dtb_path="dts"
+            elif compgen -G "$image_dir/dts/vendor/$GENERATE_CHIP/*.dtb" > /dev/null; then
+              dtb_path="dts/vendor"
             else
-
-              echo "[-] Get KPM Tools failed!"
+              echo "::error::Could not find DTB files."
               exit 1
-
             fi
 
-          }
-
-
-          GET_KPATCH_NEXT_TOOLS(){
-
-            REPO="KernelSU-Next/KPatch-Next"
-
-            ${{ env.CURLX }} \
-              "https://github.com/$REPO/releases/latest/download/kpimg-linux" \
-              kpimg-linux
-
-            ${{ env.CURLX }} \
-              "https://github.com/$REPO/releases/latest/download/kptools-linux" \
-              kptools-linux
-
-            if [[ -f "kptools-linux" ]]; then
-
-              chmod a+x kptools-linux
-
-              echo "[+] Get KPatch-Next Tools successfully!"
-
+            if [[ "$CUSTOM_DTB" == "true" ]]; then
+              cp -fp \
+                "$image_dir/$dtb_path/$GENERATE_CHIP/$DTB_NAME.dtb" \
+                "$tmp_dir/dtb"
             else
-
-              echo "[-] Get KPatch-Next Tools failed!"
-              exit 1
-
+              cat \
+                "$image_dir/$dtb_path/$GENERATE_CHIP/"*.dtb \
+                > "$tmp_dir/dtb"
             fi
 
-          }
-
-
-          if [[ "${{ env.KERNELSU_SOURCE }}" == *SukiSU* ]] || \
-             [[ "${{ env.KERNELSU_AUTO_FORK }}" == "sukisu" ]] && \
-             [[ "${{ env.KPM_INLINE }}" == "true" ]]; then
-
-            echo "[+] Detected SukiSU-Ultra and enabled KPM Inline."
-
-            ENABLE_KPM_CONFIGS
-
-            if [[ -f "include/linux/set_memory.h" ]]; then
-
-              GET_KPM_TOOLS
-
-            else
-
-              cp \
-                /tmp/Patches/Patch/set_memory_to_49_and_low.patch \
-                ./
-
-              patch -p1 < set_memory_to_49_and_low.patch || true
-
-              echo "[+] Patch set_memory successfully!"
-              echo "[-] If there is a patch error (.rej), fix it manually."
-
-              GET_KPM_TOOLS
-
-            fi
-
-          elif [[ "${{ env.KPM_INLINE }}" == "true" ]]; then
-
-            echo "[-] Your KernelSU fork could not support KPM Inline!"
-            exit 1
-
-          elif [[ "${{ env.KPM_KPATCH_NEXT }}" == "true" ]]; then
-
-            GET_KPATCH_NEXT_TOOLS
+            echo "[+] Generated DTB."
 
           else
-
-            ENABLE_KPM_CONFIGS
-
-            echo "[+] Necessary configuration items have been enabled for KPM."
-
+            echo "[+] DTB not found; continuing."
           fi
 
+          if [[ "$PACK_KMODULES" == "true" ]]; then
+            echo "[+] Packing kernel modules..."
 
-      # ============================================================
-      # Set KSU for DEFCONFIG
-      # ============================================================
+            mkdir -p "$tmp_dir/modules/vendor/lib/modules"
 
-      - name: Set KSU for DEFCONFIG
+            find "$kernel_dir/out" \
+              -type f \
+              -name "*.ko" \
+              -exec cp -fp {} "$tmp_dir/modules/vendor/lib/modules/" \;
+
+            if find "$tmp_dir/modules/vendor/lib/modules" \
+                -type f \
+                -name "*.ko" \
+                -print -quit | grep -q .; then
+              echo "[+] Kernel modules copied."
+            else
+              echo "[+] No kernel modules found."
+              rm -rf "$tmp_dir/modules"
+            fi
+          fi
+
+          cp -rp "$ak3_dir/." "$tmp_dir/"
+
+          cd "$tmp_dir"
+          7z a -mx9 "$kernel_dir/tmp.zip" .
+
+          package_name="${DEVICE_CODENAME}-${ROM_TEXT}-${timestamp}-${PACK_METHOD}.zip"
+
+          cp -fp \
+            "$kernel_dir/tmp.zip" \
+            "$kernel_dir/$package_name"
+
+          rm -rf "$tmp_dir" "$kernel_dir/tmp.zip"
+
+          echo "PACK_NAME=$package_name" >> "$GITHUB_ENV"
+
+          echo "[+] Package created:"
+          echo "    $kernel_dir/$package_name"
+
+      - name: Verify package
+        if: env.PACK_METHOD == 'Anykernel3'
         shell: bash
         run: |
           set -euxo pipefail
 
-          config="$GITHUB_WORKSPACE/device_kernel/arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
+          package_path="$GITHUB_WORKSPACE/$PACK_NAME"
 
-          mkdir -p "$(dirname "$config")"
+          test -n "$PACK_NAME"
+          test -f "$package_path"
+          test -s "$package_path"
 
-          if ! grep -q '^CONFIG_KSU=y$' "$config" 2>/dev/null; then
-            echo "CONFIG_KSU=y" >> "$config"
-          fi
+          echo "[+] Package verified:"
+          ls -lh "$package_path"
 
-          echo "[+] CONFIG_KSU=y enabled."
+      - name: Upload artifacts
+        uses: ./.github/workflows/upload-files
