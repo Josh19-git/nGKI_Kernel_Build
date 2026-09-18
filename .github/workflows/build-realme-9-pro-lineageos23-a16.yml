@@ -30,119 +30,71 @@ env:
   DEFCONFIG_ORIGIN_IMAGE: ""
   DEFCONFIG_FROM_BOOT: false
 
-  # ============================================================
   # KernelSU
-  # ============================================================
-
   KERNELSU_SOURCE: "https://github.com/KernelSU-Next/KernelSU-Next.git"
   KERNELSU_BRANCH: "legacy"
-
-  # KernelSU is prepared manually below.
-  # Automatic retrieval/forking is disabled.
   KERNELSU_AUTO_GET: "false"
   KERNELSU_AUTO_FORK: "false"
-
   KERNELSU_METHOD: "shell"
   KERNELSU_SUS_PATCH: "false"
 
-  # ============================================================
   # SUSFS
-  # ============================================================
-
   SUSFS_ENABLE: true
   SUSFS_FIXED: true
-
   PATCHES_SOURCE: "Josh19-git/NonGKI_Kernel_Patches"
   PATCHES_BRANCH: "common-5.4"
-
   SUSFS_FOLDER_FIXED: "common"
   SUSFS_PATCH_FIXED: "susfs_fix_fdc"
 
-  # ============================================================
   # AnyKernel3
-  # ============================================================
-
   AK3_SOURCE: "https://github.com/osm0sis/AnyKernel3.git"
   AK3_BRANCH: "master"
-
-  # Exact reproducible AnyKernel3 revision.
-  # pack-process must explicitly fetch this commit before checkout.
   AK3_COMMIT: "dca9dc370838d919d56c1f59ec78b27a14a72c68"
 
   BOOT_SOURCE: ""
-
   NEED_DTBO: false
   NEED_SAFE_DTBO: false
 
-  # ============================================================
   # Packaging
-  # ============================================================
-
   ROM_TEXT: "lineageos_a16"
-
   PYTHON_VERSION: "3"
-
   PACK_METHOD: "Anykernel3"
   PACK_KMODULES: "false"
 
-  # ============================================================
-  # Kernel patches/features
-  # ============================================================
-
+  # Kernel features
   REKERNEL_ENABLE: "false"
   DROIDSPACES_ENABLE: "true"
   NOMOUNT_ENABLE: "false"
-
   VPNHIDE_ENABLE: "true"
   HOOK_METHOD: "syscall"
-
   KERNEL_PATCH: "false"
 
-  # ============================================================
   # KPM
-  # ============================================================
-
   KPM_ENABLE: "false"
   KPM_INLINE: "false"
   KPM_KPATCH_NEXT: "false"
-
   KPM_PATCH_SOURCE: "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU_patch/refs/heads/main/kpm/patch_linux"
 
-  # ============================================================
   # Baseband Guard
-  # ============================================================
-
   BASEBAND_GUARD_ENABLE: "true"
   BASEBAND_GUARD_BOOT: "false"
 
-  # ============================================================
   # DTB
-  # ============================================================
-
   GENERATE_DTB: "false"
   GENERATE_CHIP: "qcom"
-
   CUSTOM_DTB: "false"
   DTB_NAME: "yupik"
 
-  # ============================================================
   # Build configuration
-  # ============================================================
-
   BUILD_DEBUGGER: "false"
   SKIP_PATCH: "false"
-
   BUILD_OTHER_CONFIG: "true"
-
   MERGE_CONFIG_FILES: "vendor/debugfs.config,vendor/holi_QGKI.config"
-
   FREE_MORE_SPACE: "false"
 
 jobs:
   build-kernel:
-
     name: Realme 9 Pro (LineageOS 23.2 A16)
-
     runs-on: ubuntu-latest
 
     env:
@@ -151,24 +103,10 @@ jobs:
       CCACHE_HARDLINK: "true"
 
     steps:
-
-      # ==========================================================
-      # Checkout build repository
-      # ==========================================================
-
-      - name: ⏰ Checkout repository
+      - name: Checkout repository
         uses: actions/checkout@v6
 
-      # ==========================================================
-      # Clone kernel source
-      #
-      # This MUST happen before Prepare KernelSU because
-      # KernelSU is installed into:
-      #
-      # device_kernel/KernelSU
-      # ==========================================================
-
-      - name: 📦 Clone kernel source
+      - name: Clone kernel source
         shell: bash
         run: |
           set -euxo pipefail
@@ -188,33 +126,14 @@ jobs:
           test -d "$kernel_dir"
           test -f "$kernel_dir/Makefile"
 
-          echo "[+] Kernel source:"
-          echo "    $kernel_dir"
-
+          echo "[+] Kernel source: $kernel_dir"
           echo "[+] Kernel branch:"
           git -C "$kernel_dir" branch --show-current
 
           echo "[+] Kernel commit:"
           git -C "$kernel_dir" rev-parse HEAD
 
-      # ==========================================================
-      # Prepare KernelSU manually
-      #
-      # IMPORTANT:
-      #
-      # Repository:
-      # KernelSU-Next/KernelSU-Next
-      #
-      # Branch:
-      # legacy
-      #
-      # Local directory:
-      # device_kernel/KernelSU
-      #
-      # NOT KernelSU-Next.
-      # ==========================================================
-
-      - name: 🔐 Prepare KernelSU
+      - name: Prepare KernelSU
         shell: bash
         run: |
           set -euxo pipefail
@@ -225,15 +144,6 @@ jobs:
           test -f "$kernel_dir/Makefile"
 
           rm -rf "$ksu_dir"
-
-          echo "[+] KernelSU source:"
-          echo "    $KERNELSU_SOURCE"
-
-          echo "[+] KernelSU branch:"
-          echo "    $KERNELSU_BRANCH"
-
-          echo "[+] KernelSU destination:"
-          echo "    $ksu_dir"
 
           git clone \
             --depth=1 \
@@ -246,15 +156,9 @@ jobs:
           test -f "$ksu_dir/kernel/Makefile"
 
           echo "[+] KernelSU prepared successfully."
+          git -C "$ksu_dir" rev-parse HEAD
 
-          echo "[+] KernelSU commit:"
-          git -C "$ksu_dir" rev-parse --short HEAD
-
-      # ==========================================================
-      # Verify KernelSU before build-ready
-      # ==========================================================
-
-      - name: 🔎 Verify KernelSU layout
+      - name: Verify KernelSU layout
         shell: bash
         run: |
           set -euxo pipefail
@@ -266,40 +170,16 @@ jobs:
           test -d "$ksu_dir"
           test -f "$ksu_dir/kernel/Makefile"
 
-          echo "[+] KernelSU directory:"
-          echo "    $ksu_dir"
-
-          echo "[+] KernelSU commit:"
-          git -C "$ksu_dir" rev-parse --short HEAD
-
-          echo "[+] KernelSU kernel directory:"
+          ls -la "$ksu_dir"
           ls -la "$ksu_dir/kernel"
 
-      # ==========================================================
-      # Build environment
-      # ==========================================================
-
-      - name: ⌛️ Compilation environment preparation
+      - name: Compilation environment preparation
         uses: ./.github/workflows/build-env
 
-      # ==========================================================
-      # Required tools
-      #
-      # KERNELSU_AUTO_GET=false
-      # KERNELSU_AUTO_FORK=false
-      #
-      # build-ready must reuse the manually prepared
-      # device_kernel/KernelSU directory.
-      # ==========================================================
-
-      - name: ⚙️ Get necessary tools
+      - name: Get necessary tools
         uses: ./.github/workflows/build-ready
 
-      # ==========================================================
-      # Verify KernelSU after build-ready
-      # ==========================================================
-
-      - name: 🔎 Verify KernelSU after build-ready
+      - name: Verify KernelSU after build-ready
         shell: bash
         run: |
           set -euxo pipefail
@@ -307,116 +187,99 @@ jobs:
           kernel_dir="$GITHUB_WORKSPACE/device_kernel"
           ksu_dir="$kernel_dir/KernelSU"
 
-          echo "[+] Checking KernelSU after build-ready..."
-
           test -d "$ksu_dir"
           test -f "$ksu_dir/kernel/Makefile"
-
-          echo "[+] KernelSU exists:"
-          echo "    $ksu_dir"
-
-          echo "[+] KernelSU commit:"
-          git -C "$ksu_dir" rev-parse --short HEAD
-
-          echo "[+] Checking drivers/kernelsu..."
 
           if [[ ! -e "$kernel_dir/drivers/kernelsu" ]]; then
             echo "::error::drivers/kernelsu is missing"
             exit 1
           fi
 
+          echo "[+] KernelSU:"
+          git -C "$ksu_dir" rev-parse --short HEAD
+
           ls -ld "$kernel_dir/drivers/kernelsu"
 
-      # ==========================================================
-      # SUSFS
-      # ==========================================================
-
-      - name: 🪝 Patch Kernel of SUSFS
+      - name: Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs
 
-      # ==========================================================
-      # No-kprobe
-      # ==========================================================
-
-      - name: 🔗 Patch for no-kprobe
+      - name: Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
 
-      # ==========================================================
-      # Extra Kernel Options
-      # ==========================================================
-
-      - name: 🪛 Extra Kernel Options
+      - name: Extra Kernel Options
         shell: bash
         run: |
           set -euxo pipefail
 
           kernel_dir="$GITHUB_WORKSPACE/device_kernel"
-
           cd "$kernel_dir"
 
           test -f /tmp/Patches/Patch/remove_modversion_check.patch
           test -f /tmp/Patches/Patch/add_automatic_dtbo_generation.patch
 
-          cp /tmp/Patches/Patch/remove_modversion_check.patch ./
-          cp /tmp/Patches/Patch/add_automatic_dtbo_generation.patch ./
+          cp /tmp/Patches/Patch/remove_modversion_check.patch .
+          cp /tmp/Patches/Patch/add_automatic_dtbo_generation.patch .
 
           patch -p1 < remove_modversion_check.patch || true
           patch -p1 < add_automatic_dtbo_generation.patch || true
 
-      # ==========================================================
-      # Re:Kernel
-      # ==========================================================
-
-      - name: 🧰 Patch Kernel of Re:Kernel
+      - name: Patch Kernel of ReKernel
         uses: ./.github/workflows/patch-rekernel
 
-      # ==========================================================
-      # DroidSpaces
-      # ==========================================================
-
-      - name: 💿 Patch Kernel of Droidspaces
+      - name: Patch Kernel of DroidSpaces
         uses: ./.github/workflows/patch-droidspaces
 
-      # ==========================================================
-      # VPNHide
-      # ==========================================================
-
-      - name: 🛡 Patch Kernel of VPNHide
+      - name: Patch Kernel of VPNHide
         uses: ./.github/workflows/patch-vpnhide
 
-      # ==========================================================
-      # Baseband Guard
-      # ==========================================================
-
-      - name: 🔒 Patch Kernel of Baseband Guard
+      - name: Patch Kernel of Baseband Guard
         uses: ./.github/workflows/patch-baseband-guard
 
-      # ==========================================================
-      # NoMount
-      # ==========================================================
-
-      - name: 🪝 Patch Kernel of NoMount
+      - name: Patch Kernel of NoMount
         uses: ./.github/workflows/patch-nomount
 
-      # ==========================================================
-      # Kernel compilation
-      # ==========================================================
-
-      - name: 🚀 Build Process
+      - name: Build Process
         uses: ./.github/workflows/build-process
 
-      # ==========================================================
-      # AnyKernel3 packaging
-      #
-      # pack-process MUST explicitly fetch AK3_COMMIT.
-      # ==========================================================
+      # Prepare AnyKernel3 explicitly.
+      # This avoids the failed shallow-clone checkout:
+      # fatal: unable to read tree
+      - name: Prepare pinned AnyKernel3
+        if: env.PACK_METHOD == 'Anykernel3'
+        shell: bash
+        run: |
+          set -euxo pipefail
 
-      - name: 🔩 Pack Process
+          kernel_dir="$GITHUB_WORKSPACE/device_kernel"
+          ak3_dir="$kernel_dir/Anykernel3"
+
+          rm -rf "$ak3_dir"
+
+          git clone \
+            --filter=blob:none \
+            --no-checkout \
+            --no-tags \
+            "$AK3_SOURCE" \
+            "$ak3_dir"
+
+          cd "$ak3_dir"
+
+          git fetch \
+            --no-tags \
+            --depth=1 \
+            origin \
+            "$AK3_COMMIT"
+
+          git checkout --detach "$AK3_COMMIT"
+
+          test -f anykernel.sh
+          test "$(git rev-parse HEAD)" = "$AK3_COMMIT"
+
+          echo "[+] AnyKernel3 prepared:"
+          git rev-parse HEAD
+
+      - name: Pack Process
         uses: ./.github/workflows/pack-process
 
-      # ==========================================================
-      # Upload artifacts
-      # ==========================================================
-
-      - name: ✏️ Upload Artifacts
+      - name: Upload Artifacts
         uses: ./.github/workflows/upload-files
