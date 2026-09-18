@@ -2,13 +2,11 @@ name: 'Preparation for the official start of the compilation steps.'
 
 runs:
   using: 'composite'
+
   steps:
 
       # ============================================================
       # Get Kernel
-      #
-      # The main workflow now clones device_kernel BEFORE this
-      # action runs. Therefore DO NOT clone it again here.
       # ============================================================
 
       - name: Get Kernel
@@ -18,7 +16,7 @@ runs:
 
           kernel_dir="$GITHUB_WORKSPACE/device_kernel"
 
-          echo "::group::[+] Validating kernel source..."
+          echo "::group::[+] Validate kernel source"
 
           if [[ ! -d "$kernel_dir" ]]; then
             echo "::error::Kernel source directory is missing: $kernel_dir"
@@ -27,14 +25,10 @@ runs:
 
           if [[ ! -f "$kernel_dir/Makefile" ]]; then
             echo "::error::Kernel source is invalid: $kernel_dir"
-            echo "::error::Missing: $kernel_dir/Makefile"
             exit 1
           fi
 
-          echo "[+] Kernel source found:"
-          echo "    $kernel_dir"
-
-          echo "::endgroup::"
+          echo "[+] Kernel source: $kernel_dir"
 
           cd "$kernel_dir"
 
@@ -51,6 +45,8 @@ runs:
           echo "FIRST_VERSION=$(echo "$KERNEL_VERSION" | awk -F '.' '{print $1}')" >> "$GITHUB_ENV"
           echo "SECOND_VERSION=$(echo "$KERNEL_VERSION" | awk -F '.' '{print $2}')" >> "$GITHUB_ENV"
 
+          echo "::endgroup::"
+
 
       # ============================================================
       # Get Kernel Arch
@@ -61,17 +57,70 @@ runs:
         run: |
           set -euxo pipefail
 
-          cd "$GITHUB_WORKSPACE/device_kernel"
+          kernel_dir="$GITHUB_WORKSPACE/device_kernel"
 
-          if [[ -d "arch/arm64/configs" ]]; then
+          if [[ -d "$kernel_dir/arch/arm64/configs" ]]; then
             echo "KERNEL_ARCH=arm64" >> "$GITHUB_ENV"
             echo "[+] Kernel architecture: arm64"
-
           else
-            echo "[-] Non-ARM64 Devies not supported!"
+            echo "[-] Non-ARM64 devices are not supported!"
             exit 1
-
           fi
+
+
+      # ============================================================
+      # Validate manually prepared KernelSU
+      #
+      # KERNELSU_AUTO_GET=false means this action must NOT download,
+      # clone, replace, or delete the KernelSU checkout.
+      # ============================================================
+
+      - name: Validate KernelSU
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          kernel_dir="$GITHUB_WORKSPACE/device_kernel"
+          ksu_dir="$kernel_dir/KernelSU"
+
+          echo "::group::[+] Validate KernelSU checkout"
+
+          if [[ ! -d "$kernel_dir" ]]; then
+            echo "::error::Kernel source directory is missing: $kernel_dir"
+            exit 1
+          fi
+
+          if [[ ! -f "$kernel_dir/Makefile" ]]; then
+            echo "::error::Kernel source is invalid: $kernel_dir"
+            exit 1
+          fi
+
+          if [[ ! -d "$ksu_dir" ]]; then
+            echo "::error::KernelSU checkout is missing: $ksu_dir"
+            exit 1
+          fi
+
+          if [[ ! -f "$ksu_dir/kernel/Makefile" ]]; then
+            echo "::error::KernelSU checkout is missing or invalid: $ksu_dir"
+            echo "::error::Expected: $ksu_dir/kernel/Makefile"
+
+            echo "::group::KernelSU contents"
+            find "$ksu_dir" -maxdepth 2 -type f | sort || true
+            echo "::endgroup::"
+
+            exit 1
+          fi
+
+          echo "[+] KernelSU checkout:"
+          echo "    $ksu_dir"
+
+          echo "[+] KernelSU commit:"
+          git -C "$ksu_dir" rev-parse --short HEAD
+
+          echo "[+] KernelSU branch:"
+          git -C "$ksu_dir" branch --show-current || true
+
+          echo "::endgroup::"
 
 
       # ============================================================
@@ -83,18 +132,20 @@ runs:
         run: |
           set -euxo pipefail
 
-          # Set ${{ env.PACK_METHOD }}
+          cd "$GITHUB_WORKSPACE/device_kernel"
 
           if [[ "${{ env.PACK_METHOD }}" == "Anykernel3" ]]; then
-            cd "$GITHUB_WORKSPACE/device_kernel"
 
             if [[ -d "Anykernel3" ]]; then
-              echo "[+] Found Anykernel3 in Kernel!"
+              echo "[+] Found AnyKernel3 in Kernel!"
 
             elif [[ "${{ env.AK3_SOURCE }}" == *"osm0sis/AnyKernel3.git" ]]; then
-              git clone "${{ env.AK3_SOURCE }}" \
+
+              git clone \
+                "${{ env.AK3_SOURCE }}" \
                 -b "${{ env.AK3_BRANCH }}" \
-                Anykernel3
+                Anykernel3 \
+                --depth=1
 
               cd Anykernel3
 
@@ -105,11 +156,13 @@ runs:
               echo "[+] Get Anykernel3 successfully!"
 
             else
+
               git clone \
                 "${{ env.AK3_SOURCE }}" \
                 -b "${{ env.AK3_BRANCH }}" \
                 Anykernel3 \
                 --depth=1
+
             fi
 
           elif [[ "${{ env.PACK_METHOD }}" == "MKBOOTIMG" ]] || \
@@ -132,8 +185,10 @@ runs:
             cd "$GITHUB_WORKSPACE/device_kernel"
 
           else
+
             echo "[-] Need packing method!"
             exit 1
+
           fi
 
           echo "PACK_METHOD=${{ env.PACK_METHOD }}" >> "$GITHUB_ENV"
@@ -155,7 +210,7 @@ runs:
 
             ${{ env.CURLX }} \
               "${{ env.DEFCONFIG_SOURCE }}" \
-              "device_kernel/arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
+              "arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
 
           elif [[ -z "${{ env.DEFCONFIG_ORIGIN_IMAGE }}" ]]; then
 
@@ -191,6 +246,7 @@ runs:
                 > "$GITHUB_WORKSPACE/device_kernel/arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
 
             fi
+
           fi
 
 
@@ -203,9 +259,11 @@ runs:
         run: |
           set -euxo pipefail
 
-          cd "$GITHUB_WORKSPACE/device_kernel"
+          kernel_dir="$GITHUB_WORKSPACE/device_kernel"
 
-          echo "::group::[+] Starting clean hook..."
+          cd "$kernel_dir"
+
+          echo "::group::[+] Starting clean hook"
 
           cp /tmp/Bin/clean_hook.sh ./
 
@@ -217,18 +275,18 @@ runs:
 
 
       # ============================================================
-      # Set KernelSU
+      # KernelSU
       #
       # IMPORTANT:
       #
-      # KernelSU-Next is prepared by the MAIN workflow at:
+      # KERNELSU_AUTO_GET=false
       #
-      #   device_kernel/KernelSU
+      # Therefore this section ONLY validates and connects the
+      # existing checkout created by Prepare KernelSU.
       #
-      # We intentionally DO NOT create:
-      #
-      #   device_kernel/KernelSU-Next
-      #
+      # It NEVER clones KernelSU.
+      # It NEVER deletes KernelSU.
+      # It NEVER runs KernelSU setup.sh.
       # ============================================================
 
       - name: Set KernelSU
@@ -236,297 +294,126 @@ runs:
         run: |
           set -euxo pipefail
 
-          cd "$GITHUB_WORKSPACE/device_kernel"
+          kernel_dir="$GITHUB_WORKSPACE/device_kernel"
+          ksu_dir="$kernel_dir/KernelSU"
 
-          KERNELSU_AUTO(){
+          echo "::group::[+] KernelSU configuration"
 
-            if [[ "${{ env.KERNELSU_AUTO_FORK }}" == "xxksu" ]]; then
+          KERNELSU_AUTO_GET="${{ env.KERNELSU_AUTO_GET }}"
+          KERNELSU_AUTO_FORK="${{ env.KERNELSU_AUTO_FORK }}"
 
-                KERNELSU_AUTHOR="backslashxx"
-                KERNELSU_NAME="KernelSU"
-                KERNELSU_ORIGIN_BRANCH="master"
-                KERNELSU_BRANCH="master"
+          echo "[+] KERNELSU_AUTO_GET=$KERNELSU_AUTO_GET"
+          echo "[+] KERNELSU_AUTO_FORK=$KERNELSU_AUTO_FORK"
 
+          # --------------------------------------------------------
+          # Automatic KernelSU retrieval is disabled.
+          # --------------------------------------------------------
 
-            elif [[ "${{ env.KERNELSU_AUTO_FORK }}" == "rsuntk" ]]; then
+          if [[ "${KERNELSU_AUTO_GET,,}" != "true" ]]; then
 
-                KERNELSU_AUTHOR="rsuntk"
-                KERNELSU_NAME="KernelSU"
-                KERNELSU_ORIGIN_BRANCH="main"
-                KERNELSU_BRANCH="main"
+            echo "[+] Automatic KernelSU retrieval disabled."
+            echo "[+] Reusing existing checkout."
 
-
-            elif [[ "${{ env.KERNELSU_AUTO_FORK }}" == "sukisu" ]]; then
-
-                KERNELSU_AUTHOR="SukiSU-Ultra"
-                KERNELSU_NAME="SukiSU-Ultra"
-                KERNELSU_ORIGIN_BRANCH="main"
-                KERNELSU_BRANCH="builtin"
-
-
-            elif [[ "${{ env.KERNELSU_AUTO_FORK }}" == "next" ]]; then
-
-                KERNELSU_AUTHOR="KernelSU-Next"
-                KERNELSU_NAME="KernelSU-Next"
-                KERNELSU_ORIGIN_BRANCH="legacy"
-                KERNELSU_BRANCH="legacy"
-
-
-            elif [[ "${{ env.KERNELSU_AUTO_FORK }}" == "resukisu" ]]; then
-
-                KERNELSU_AUTHOR="ReSukiSU"
-                KERNELSU_NAME="ReSukiSU"
-                KERNELSU_ORIGIN_BRANCH="main"
-                KERNELSU_BRANCH="main"
-
-
-            else
-
-                echo "[-] Please input valid fork name!"
-                exit 1
-
+            if [[ ! -d "$ksu_dir" ]]; then
+              echo "::error::KernelSU directory is missing: $ksu_dir"
+              exit 1
             fi
 
+            if [[ ! -f "$ksu_dir/kernel/Makefile" ]]; then
+              echo "::error::KernelSU checkout is missing or invalid: $ksu_dir"
+              echo "::error::Expected: $ksu_dir/kernel/Makefile"
 
-            # --------------------------------------------------------
-            # KernelSU-Next
-            #
-            # Always use:
-            #
-            # device_kernel/KernelSU
-            #
-            # even though the repository itself is named
-            # KernelSU-Next.
-            # --------------------------------------------------------
+              echo "::group::KernelSU contents"
+              find "$ksu_dir" -maxdepth 2 -type f | sort || true
+              echo "::endgroup::"
 
-            if [[ "${{ env.KERNELSU_AUTO_FORK }}" == "next" ]]; then
-
-                KERNELSU_FOLDER="KernelSU"
-
-                echo "KERNELSU_NAME=KernelSU-Next" >> "$GITHUB_ENV"
-
-                ksu_dir="$GITHUB_WORKSPACE/device_kernel/KernelSU"
-
-                if [[ ! -d "$ksu_dir" ]]; then
-                    echo "::error::KernelSU directory is missing: $ksu_dir"
-                    exit 1
-                fi
-
-                if [[ ! -f "$ksu_dir/kernel/Makefile" ]]; then
-                    echo "::error::KernelSU checkout is invalid: $ksu_dir"
-                    echo "::error::Expected: $ksu_dir/kernel/Makefile"
-                    exit 1
-                fi
-
-                echo "[+] KernelSU-Next detected."
-                echo "[+] Repository: $KERNELSU_AUTHOR/$KERNELSU_NAME"
-                echo "[+] Branch: $KERNELSU_BRANCH"
-                echo "[+] Local path: $ksu_dir"
-
-
-            else
-
-                KERNELSU_FOLDER="KernelSU"
-
-                echo "KERNELSU_NAME=$KERNELSU_FOLDER" >> "$GITHUB_ENV"
-
+              exit 1
             fi
 
+            echo "[+] KernelSU checkout is valid."
 
-            # --------------------------------------------------------
-            # KernelSU installation method
-            # --------------------------------------------------------
-
-            if [[ "${{ env.KERNELSU_METHOD }}" == "shell" ]]; then
-
-                # ----------------------------------------------------
-                # KernelSU-Next has already been cloned by the main
-                # workflow.
-                #
-                # DO NOT execute setup.sh again.
-                # ----------------------------------------------------
-
-                if [[ "${{ env.KERNELSU_AUTO_FORK }}" == "next" ]]; then
-
-                    ksu_dir="$GITHUB_WORKSPACE/device_kernel/KernelSU"
-
-                    if [[ ! -d "$ksu_dir" ]]; then
-                        echo "::error::KernelSU directory is missing: $ksu_dir"
-                        exit 1
-                    fi
-
-                    if [[ ! -f "$ksu_dir/kernel/Makefile" ]]; then
-                        echo "::error::KernelSU checkout is invalid: $ksu_dir"
-                        exit 1
-                    fi
-
-                    echo "[+] Using pre-cloned KernelSU-Next."
-                    echo "[+] Path: $ksu_dir"
-
-                else
-
-                    curl -sSL \
-                      "https://raw.githubusercontent.com/${KERNELSU_AUTHOR}/${KERNELSU_NAME}/refs/heads/${KERNELSU_ORIGIN_BRANCH}/kernel/setup.sh" \
-                      | bash -s "$KERNELSU_BRANCH"
-
-                fi
-
-
-            elif [[ "${{ env.KERNELSU_METHOD }}" == "manual" ]]; then
-
-                git clone \
-                  "https://github.com/$KERNELSU_AUTHOR/$KERNELSU_NAME.git" \
-                  -b "$KERNELSU_BRANCH" \
-                  "$KERNELSU_FOLDER"
-
-                ln -sfn \
-                  "../$KERNELSU_FOLDER/kernel" \
-                  "drivers/kernelsu"
-
-                grep -q "kernelsu" \
-                  "$GITHUB_WORKSPACE/device_kernel/drivers/Makefile" \
-                  || printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" \
-                    >> "$GITHUB_WORKSPACE/device_kernel/drivers/Makefile"
-
-                grep -q 'source "drivers/kernelsu/Kconfig"' \
-                  "$GITHUB_WORKSPACE/device_kernel/drivers/Kconfig" \
-                  || sed -i \
-                    '/endmenu/i\source "drivers/kernelsu/Kconfig"' \
-                    "$GITHUB_WORKSPACE/device_kernel/drivers/Kconfig"
-
-                echo "[+] KernelSU Settings done."
-
-
-            elif [[ "${{ env.KERNELSU_METHOD }}" == "only" ]]; then
-
-                git clone \
-                  "https://github.com/$KERNELSU_AUTHOR/$KERNELSU_NAME.git" \
-                  -b "$KERNELSU_BRANCH" \
-                  "$KERNELSU_FOLDER"
-
-                ln -sfn \
-                  "../$KERNELSU_FOLDER/kernel" \
-                  "drivers/kernelsu"
-
-            fi
-
-
-            # --------------------------------------------------------
-            # For the pre-cloned KernelSU-Next tree, explicitly
-            # connect it to the kernel source.
-            # --------------------------------------------------------
-
-            if [[ "${{ env.KERNELSU_AUTO_FORK }}" == "next" ]]; then
-
-                ksu_dir="$GITHUB_WORKSPACE/device_kernel/KernelSU"
-
-                ln -sfn \
-                  "../KernelSU/kernel" \
-                  "$GITHUB_WORKSPACE/device_kernel/drivers/kernelsu"
-
-                grep -q "kernelsu" \
-                  "$GITHUB_WORKSPACE/device_kernel/drivers/Makefile" \
-                  || printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" \
-                    >> "$GITHUB_WORKSPACE/device_kernel/drivers/Makefile"
-
-                grep -q 'source "drivers/kernelsu/Kconfig"' \
-                  "$GITHUB_WORKSPACE/device_kernel/drivers/Kconfig" \
-                  || sed -i \
-                    '/endmenu/i\source "drivers/kernelsu/Kconfig"' \
-                    "$GITHUB_WORKSPACE/device_kernel/drivers/Kconfig"
-
-                echo "[+] KernelSU-Next linked to kernel source."
-                echo "[+] drivers/kernelsu -> ../KernelSU/kernel"
-
-            fi
-
-          }
-
-
-          # ==========================================================
-          # Manual KernelSU
-          # ==========================================================
-
-          KERNELSU_MANUAL(){
-
-            if [[ "${{ env.KERNELSU_SOURCE }}" == *Next* ]]; then
-
-                KERNELSU_FOLDER="KernelSU"
-
-                echo "KERNELSU_NAME=KernelSU-Next" >> "$GITHUB_ENV"
-
-            else
-
-                KERNELSU_FOLDER="KernelSU"
-
-                echo "KERNELSU_NAME=$KERNELSU_FOLDER" >> "$GITHUB_ENV"
-
-            fi
-
-
-            if [[ "${{ env.KERNELSU_METHOD }}" == "shell" ]]; then
-
-                curl -sSL \
-                  "${{ env.KERNELSU_SOURCE }}" \
-                  | bash -s "${{ env.KERNELSU_BRANCH }}"
-
-
-            elif [[ "${{ env.KERNELSU_METHOD }}" == "manual" ]]; then
-
-                git clone \
-                  "${{ env.KERNELSU_SOURCE }}" \
-                  -b "${{ env.KERNELSU_BRANCH }}" \
-                  "$KERNELSU_FOLDER"
-
-                ln -sfn \
-                  "../$KERNELSU_FOLDER/kernel" \
-                  "drivers/kernelsu"
-
-                grep -q "kernelsu" \
-                  "$GITHUB_WORKSPACE/device_kernel/drivers/Makefile" \
-                  || printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" \
-                    >> "$GITHUB_WORKSPACE/device_kernel/drivers/Makefile"
-
-                grep -q 'source "drivers/kernelsu/Kconfig"' \
-                  "$GITHUB_WORKSPACE/device_kernel/drivers/Kconfig" \
-                  || sed -i \
-                    '/endmenu/i\source "drivers/kernelsu/Kconfig"' \
-                    "$GITHUB_WORKSPACE/device_kernel/drivers/Kconfig"
-
-                echo "[+] KernelSU Settings done."
-
-
-            elif [[ "${{ env.KERNELSU_METHOD }}" == "only" ]]; then
-
-                git clone \
-                  "${{ env.KERNELSU_SOURCE }}" \
-                  -b "${{ env.KERNELSU_BRANCH }}" \
-                  "$KERNELSU_FOLDER"
-
-                ln -sfn \
-                  "../$KERNELSU_FOLDER/kernel" \
-                  "drivers/kernelsu"
-
-            fi
-
-          }
-
-
-          # ==========================================================
-          # Core
-          # ==========================================================
-
-          if [[ "${{ env.KERNELSU_AUTO_GET }}" == "true" ]]; then
-
-            KERNELSU_AUTO
+            echo "KERNELSU_NAME=KernelSU-Next" >> "$GITHUB_ENV"
+            echo "KERNELSU_FOLDER=KernelSU" >> "$GITHUB_ENV"
 
           else
 
-            KERNELSU_MANUAL
+            echo "::error::Automatic KernelSU retrieval must remain disabled."
+            echo "::error::Set KERNELSU_AUTO_GET to false when using Prepare KernelSU."
+            exit 1
 
           fi
 
-          echo "KERNELSU_METHOD=${{ env.KERNELSU_METHOD }}" >> "$GITHUB_ENV"
+          # --------------------------------------------------------
+          # Always use the exact downstream-compatible path.
+          # --------------------------------------------------------
+
+          if [[ ! -d "$ksu_dir/kernel" ]]; then
+            echo "::error::KernelSU kernel directory is missing:"
+            echo "::error::$ksu_dir/kernel"
+            exit 1
+          fi
+
+          # --------------------------------------------------------
+          # Create/update the expected kernel integration link.
+          # --------------------------------------------------------
+
+          ln -sfn \
+            "../KernelSU/kernel" \
+            "$kernel_dir/drivers/kernelsu"
+
+          if [[ ! -e "$kernel_dir/drivers/kernelsu" ]]; then
+            echo "::error::Failed to create drivers/kernelsu"
+            exit 1
+          fi
+
+          echo "[+] KernelSU path:"
+          echo "    $ksu_dir"
+
+          echo "[+] KernelSU integration:"
+          echo "    $kernel_dir/drivers/kernelsu"
+
+          echo "::endgroup::"
+
+
+      # ============================================================
+      # Ensure KernelSU is present in Kconfig/Makefile
+      # ============================================================
+
+      - name: Configure KernelSU integration
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          kernel_dir="$GITHUB_WORKSPACE/device_kernel"
+          ksu_dir="$kernel_dir/KernelSU"
+
+          if [[ ! -f "$ksu_dir/kernel/Makefile" ]]; then
+            echo "::error::KernelSU checkout is missing or invalid: $ksu_dir"
+            exit 1
+          fi
+
+          cd "$kernel_dir"
+
+          # drivers/Makefile
+          if ! grep -q 'obj-$(CONFIG_KSU) += kernelsu/' \
+              "$kernel_dir/drivers/Makefile"; then
+
+            printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' \
+              >> "$kernel_dir/drivers/Makefile"
+
+          fi
+
+          # drivers/Kconfig
+          if ! grep -q 'source "drivers/kernelsu/Kconfig"' \
+              "$kernel_dir/drivers/Kconfig"; then
+
+            sed -i \
+              '/endmenu/i\source "drivers/kernelsu/Kconfig"' \
+              "$kernel_dir/drivers/Kconfig"
+
+          fi
+
+          echo "[+] KernelSU integration configured."
 
 
       # ============================================================
@@ -538,27 +425,42 @@ runs:
         run: |
           set -euxo pipefail
 
-          ksu_link="$GITHUB_WORKSPACE/device_kernel/drivers/kernelsu"
+          ksu_dir="$GITHUB_WORKSPACE/device_kernel/KernelSU"
 
-          if [[ ! -e "$ksu_link" ]]; then
-            echo "::error::drivers/kernelsu is missing: $ksu_link"
+          if [[ ! -d "$ksu_dir" ]]; then
+            echo "::error::KernelSU directory is missing: $ksu_dir"
             exit 1
           fi
 
-          cd "$ksu_link"
+          if [[ ! -f "$ksu_dir/kernel/Makefile" ]]; then
+            echo "::error::Invalid KernelSU checkout: $ksu_dir"
+            exit 1
+          fi
 
           if [[ "${{ env.KERNELSU_SOURCE }}" == *SukiSU* ]] || \
              [[ "${{ env.KERNELSU_AUTO_FORK }}" == "sukisu" ]]; then
 
-            cp /tmp/Patches/Patch/sukisu_ultra_fixed.patch ./
+            cd "$ksu_dir/kernel"
 
-            patch -p1 < sukisu_ultra_fixed.patch
+            if [[ -f "/tmp/Patches/Patch/sukisu_ultra_fixed.patch" ]]; then
 
-            echo "[+] SukiSU-Ultra mitigation measures implemented."
+              cp \
+                /tmp/Patches/Patch/sukisu_ultra_fixed.patch \
+                ./
+
+              patch -p1 < sukisu_ultra_fixed.patch
+
+              echo "[+] SukiSU-Ultra mitigation measures implemented."
+
+            else
+
+              echo "[-] SukiSU patch not found, skipped."
+
+            fi
 
           else
 
-            echo "[-] Your KernelSU Fork needn't it, Skipped."
+            echo "[-] Your KernelSU fork doesn't need this, skipped."
 
           fi
 
@@ -579,25 +481,30 @@ runs:
             exit 1
           fi
 
-          cd "$ksu_dir"
+          if [[ ! -f "$ksu_dir/kernel/Makefile" ]]; then
+            echo "::error::Invalid KernelSU checkout: $ksu_dir"
+            exit 1
+          fi
 
-          if [[ "${{ env.KERNELSU_SOURCE }}" == *backslashxx* ]] || \
-             [[ "${{ env.KERNELSU_AUTO_FORK }}" == "xxksu" ]]; then
+          if [[ "${{ env.KERNELSU_AUTO_FORK }}" == "xxksu" ]] || \
+             [[ "${{ env.KERNELSU_SOURCE }}" == *backslashxx* ]]; then
 
             if [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
+
+              cd "$ksu_dir/kernel"
 
               patch -p1 < <(
                 curl -sL \
                   "https://github.com/midori01/KernelSU/commit/xx.patch"
               ) || true
 
-              echo "[+] xxksu susfs applied."
+              echo "[+] xxksu SUSFS applied."
 
             fi
 
           else
 
-            echo "[-] Your KernelSU Fork needn't it, Skipped."
+            echo "[-] Your KernelSU fork doesn't need this, skipped."
 
           fi
 
@@ -645,15 +552,14 @@ runs:
 
             if [[ -f "patch" ]]; then
 
-                chmod a+x patch
+              chmod a+x patch
 
-                echo "[+] Get KPM Tools successfully!"
+              echo "[+] Get KPM Tools successfully!"
 
             else
 
-                echo "[-] Get KPM Tools failed!"
-
-                exit 1
+              echo "[-] Get KPM Tools failed!"
+              exit 1
 
             fi
 
@@ -674,15 +580,14 @@ runs:
 
             if [[ -f "kptools-linux" ]]; then
 
-                chmod a+x kptools-linux
+              chmod a+x kptools-linux
 
-                echo "[+] Get KPatch-Next Tools successfully!"
+              echo "[+] Get KPatch-Next Tools successfully!"
 
             else
 
-                echo "[-] Get KPatch-Next Tools failed!"
-
-                exit 1
+              echo "[-] Get KPatch-Next Tools failed!"
+              exit 1
 
             fi
 
@@ -699,41 +604,37 @@ runs:
 
             if [[ -f "include/linux/set_memory.h" ]]; then
 
-                GET_KPM_TOOLS
+              GET_KPM_TOOLS
 
             else
 
-                cp /tmp/Patches/Patch/set_memory_to_49_and_low.patch ./
+              cp \
+                /tmp/Patches/Patch/set_memory_to_49_and_low.patch \
+                ./
 
-                patch -p1 < set_memory_to_49_and_low.patch || true
+              patch -p1 < set_memory_to_49_and_low.patch || true
 
-                echo "[+] Patch set_memory successfully!"
-                echo "[-] If have patch error (.rej), manual fixed it."
+              echo "[+] Patch set_memory successfully!"
+              echo "[-] If there is a patch error (.rej), fix it manually."
 
-                GET_KPM_TOOLS
+              GET_KPM_TOOLS
 
             fi
 
+          elif [[ "${{ env.KPM_INLINE }}" == "true" ]]; then
 
-          elif [[ "${{ env.KERNELSU_SOURCE }}" != *SukiSU* ]] || \
-               [[ "${{ env.KERNELSU_AUTO_FORK }}" != "sukisu" ]] && \
-               [[ "${{ env.KPM_INLINE }}" == "true" ]]; then
-
-            echo "[-] Your KernelSU Fork could not support KPM Inline!"
-
+            echo "[-] Your KernelSU fork could not support KPM Inline!"
             exit 1
-
 
           elif [[ "${{ env.KPM_KPATCH_NEXT }}" == "true" ]]; then
 
             GET_KPATCH_NEXT_TOOLS
 
-
           else
 
             ENABLE_KPM_CONFIGS
 
-            echo "[+] Necessary configuration items have been enabled for the KPM feature."
+            echo "[+] Necessary configuration items have been enabled for KPM."
 
           fi
 
@@ -747,7 +648,12 @@ runs:
         run: |
           set -euxo pipefail
 
-          cd "$GITHUB_WORKSPACE/device_kernel"
+          config="$GITHUB_WORKSPACE/device_kernel/arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
 
-          echo "CONFIG_KSU=y" \
-            >> "./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
+          mkdir -p "$(dirname "$config")"
+
+          if ! grep -q '^CONFIG_KSU=y$' "$config" 2>/dev/null; then
+            echo "CONFIG_KSU=y" >> "$config"
+          fi
+
+          echo "[+] CONFIG_KSU=y enabled."
