@@ -1,0 +1,831 @@
+root@hakdog:~/oscar# cd ~/oscar
+
+grep -n -A45 -B10 "do_faccessat" fs/open.c
+338-SYSCALL_DEFINE4(fallocate, int, fd, int, mode, loff_t, offset, loff_t, len)
+339-{
+340-    return ksys_fallocate(fd, mode, offset, len);
+341-}
+342-
+343-/*
+344- * access() needs to use the real uid/gid, not the effective uid/gid.
+345- * We do this by temporarily clearing all FS-related capabilities and                                               346- * switching the fsuid/fsgid around to the real ones.
+347- */
+348:long do_faccessat(int dfd, const char __user *filename, int mode)
+349-{
+350-    const struct cred *old_cred;
+351-    struct cred *override_cred;
+352-    struct path path;
+353-    struct inode *inode;
+354-    int res;
+355-    unsigned int lookup_flags = LOOKUP_FOLLOW;
+356-
+357-    if (mode & ~S_IRWXO)    /* where's F_OK, X_OK, W_OK, R_OK? */
+358-            return -EINVAL;
+359-
+360-    override_cred = prepare_creds();
+361-    if (!override_cred)
+362-            return -ENOMEM;
+363-
+364-    override_cred->fsuid = override_cred->uid;
+365-    override_cred->fsgid = override_cred->gid;
+366-
+367-    if (!issecure(SECURE_NO_SETUID_FIXUP)) {
+368-            /* Clear the capabilities if we switch to a non-root user */
+369-            kuid_t root_uid = make_kuid(override_cred->user_ns, 0);
+370-            if (!uid_eq(override_cred->uid, root_uid))
+371-                    cap_clear(override_cred->cap_effective);
+372-            else
+373-                    override_cred->cap_effective =
+374-                            override_cred->cap_permitted;
+375-    }
+376-
+377-    /*
+378-     * The new set of credentials can *only* be used in
+379-     * task-synchronous circumstances, and does not need
+380-     * RCU freeing, unless somebody then takes a separate
+381-     * reference to it.
+382-     *
+383-     * NOTE! This is _only_ true because this credential
+384-     * is used purely for override_creds() that installs
+385-     * it as the subjective cred. Other threads will be
+386-     * accessing ->real_cred, not the subjective cred.
+387-     *
+388-     * If somebody _does_ make a copy of this (using the
+389-     * 'get_current_cred()' function), that will clear the
+390-     * non_rcu field, because now that other user may be
+391-     * expecting RCU freeing. But normal thread-synchronous
+392-     * cred accesses will keep things non-RCY.
+393-     */
+--
+435-            goto retry;
+436-    }
+437-out:
+438-    revert_creds(old_cred);
+439-    put_cred(override_cred);
+440-    return res;
+441-}
+442-
+443-SYSCALL_DEFINE3(faccessat, int, dfd, const char __user *, filename, int, mode)
+444-{
+445:    return do_faccessat(dfd, filename, mode);
+446-}
+447-
+448-SYSCALL_DEFINE2(access, const char __user *, filename, int, mode)
+449-{
+450:    return do_faccessat(AT_FDCWD, filename, mode);
+451-}
+452-
+453-int ksys_chdir(const char __user *filename)
+454-{
+455-    struct path path;
+456-    int error;
+457-    unsigned int lookup_flags = LOOKUP_FOLLOW | LOOKUP_DIRECTORY;
+458-retry:
+459-    error = user_path_at(AT_FDCWD, filename, lookup_flags, &path);
+460-    if (error)
+461-            goto out;
+462-
+463-    error = inode_permission(path.dentry->d_inode, MAY_EXEC | MAY_CHDIR);
+464-    if (error)
+465-            goto dput_and_out;
+466-
+467-    set_fs_pwd(current->fs, &path);
+468-
+469-dput_and_out:
+470-    path_put(&path);
+471-    if (retry_estale(error, lookup_flags)) {
+472-            lookup_flags |= LOOKUP_REVAL;
+473-            goto retry;
+474-    }
+475-out:
+476-    return error;
+477-}
+478-
+479-SYSCALL_DEFINE1(chdir, const char __user *, filename)
+480-{
+481-    return ksys_chdir(filename);
+482-}
+483-
+484-SYSCALL_DEFINE1(fchdir, unsigned int, fd)
+485-{
+486-    struct fd f = fdget_raw(fd);
+487-    int error;
+488-
+489-    error = -EBADF;
+490-    if (!f.file)
+491-            goto out;
+492-
+493-    error = -ENOTDIR;
+494-    if (!d_can_lookup(f.file->f_path.dentry))
+495-            goto out_putf;
+root@hakdog:~/oscar# grep -n -A45 -B10 "SYSCALL_DEFINE3(read" fs/read_write.c
+585-                    ppos = &pos;
+586-            }
+587-            ret = vfs_read(f.file, buf, count, ppos);
+588-            if (ret >= 0 && ppos)
+589-                    f.file->f_pos = pos;
+590-            fdput_pos(f);
+591-    }
+592-    return ret;
+593-}
+594-
+595:SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
+596-{
+597-    return ksys_read(fd, buf, count);
+598-}
+599-
+600-ssize_t ksys_write(unsigned int fd, const char __user *buf, size_t count)
+601-{
+602-    struct fd f = fdget_pos(fd);
+603-    ssize_t ret = -EBADF;
+604-
+605-    if (f.file) {
+606-            loff_t pos, *ppos = file_ppos(f.file);
+607-            if (ppos) {
+608-                    pos = *ppos;
+609-                    ppos = &pos;
+610-            }
+611-            ret = vfs_write(f.file, buf, count, ppos);
+612-            if (ret >= 0 && ppos)
+613-                    f.file->f_pos = pos;
+614-            fdput_pos(f);
+615-    }
+616-
+617-    return ret;
+618-}
+619-
+620-SYSCALL_DEFINE3(write, unsigned int, fd, const char __user *, buf,
+621-            size_t, count)
+622-{
+623-    return ksys_write(fd, buf, count);
+624-}
+625-
+626-ssize_t ksys_pread64(unsigned int fd, char __user *buf, size_t count,
+627-                 loff_t pos)
+628-{
+629-    struct fd f;
+630-    ssize_t ret = -EBADF;
+631-
+632-    if (pos < 0)
+633-            return -EINVAL;
+634-
+635-    f = fdget(fd);
+636-    if (f.file) {
+637-            ret = -ESPIPE;
+638-            if (f.file->f_mode & FMODE_PREAD)
+639-                    ret = vfs_read(f.file, buf, count, &pos);
+640-            fdput(f);
+--
+1168-                   ret = vfs_writev(f.file, vec, vlen, &pos, flags);
+1169-           fdput(f);
+1170-   }
+1171-
+1172-   if (ret > 0)
+1173-           add_wchar(current, ret);
+1174-   inc_syscw(current);
+1175-   return ret;
+1176-}
+1177-
+1178:SYSCALL_DEFINE3(readv, unsigned long, fd, const struct iovec __user *, vec,
+1179-           unsigned long, vlen)
+1180-{
+1181-   return do_readv(fd, vec, vlen, 0);
+1182-}
+1183-
+1184-SYSCALL_DEFINE3(writev, unsigned long, fd, const struct iovec __user *, vec,
+1185-           unsigned long, vlen)
+1186-{
+1187-   return do_writev(fd, vec, vlen, 0);
+1188-}
+1189-
+1190-SYSCALL_DEFINE5(preadv, unsigned long, fd, const struct iovec __user *, vec,
+1191-           unsigned long, vlen, unsigned long, pos_l, unsigned long, pos_h)
+1192-{
+1193-   loff_t pos = pos_from_hilo(pos_h, pos_l);
+1194-
+1195-   return do_preadv(fd, vec, vlen, pos, 0);
+1196-}
+1197-
+1198-SYSCALL_DEFINE6(preadv2, unsigned long, fd, const struct iovec __user *, vec,
+1199-           unsigned long, vlen, unsigned long, pos_l, unsigned long, pos_h,
+1200-           rwf_t, flags)
+1201-{
+1202-   loff_t pos = pos_from_hilo(pos_h, pos_l);
+1203-
+1204-   if (pos == -1)
+1205-           return do_readv(fd, vec, vlen, flags);
+1206-
+1207-   return do_preadv(fd, vec, vlen, pos, flags);
+1208-}
+1209-
+1210-SYSCALL_DEFINE5(pwritev, unsigned long, fd, const struct iovec __user *, vec,
+1211-           unsigned long, vlen, unsigned long, pos_l, unsigned long, pos_h)
+1212-{
+1213-   loff_t pos = pos_from_hilo(pos_h, pos_l);
+1214-
+1215-   return do_pwritev(fd, vec, vlen, pos, 0);
+1216-}
+1217-
+1218-SYSCALL_DEFINE6(pwritev2, unsigned long, fd, const struct iovec __user *, vec,
+1219-           unsigned long, vlen, unsigned long, pos_l, unsigned long, pos_h,
+1220-           rwf_t, flags)
+1221-{
+1222-   loff_t pos = pos_from_hilo(pos_h, pos_l);
+1223-
+--
+1260-           return -EBADF;
+1261-   pos = f.file->f_pos;
+1262-   ret = compat_readv(f.file, vec, vlen, &pos, flags);
+1263-   if (ret >= 0)
+1264-           f.file->f_pos = pos;
+1265-   fdput_pos(f);
+1266-   return ret;
+1267-
+1268-}
+1269-
+1270:COMPAT_SYSCALL_DEFINE3(readv, compat_ulong_t, fd,
+1271-           const struct compat_iovec __user *,vec,
+1272-           compat_ulong_t, vlen)
+1273-{
+1274-   return do_compat_readv(fd, vec, vlen, 0);
+1275-}
+1276-
+1277-static long do_compat_preadv64(unsigned long fd,
+1278-                             const struct compat_iovec __user *vec,
+1279-                             unsigned long vlen, loff_t pos, rwf_t flags)
+1280-{
+1281-   struct fd f;
+1282-   ssize_t ret;
+1283-
+1284-   if (pos < 0)
+1285-           return -EINVAL;
+1286-   f = fdget(fd);
+1287-   if (!f.file)
+1288-           return -EBADF;
+1289-   ret = -ESPIPE;
+1290-   if (f.file->f_mode & FMODE_PREAD)
+1291-           ret = compat_readv(f.file, vec, vlen, &pos, flags);
+1292-   fdput(f);
+1293-   return ret;
+1294-}
+1295-
+1296-#ifdef __ARCH_WANT_COMPAT_SYS_PREADV64
+1297-COMPAT_SYSCALL_DEFINE4(preadv64, unsigned long, fd,
+1298-           const struct compat_iovec __user *,vec,
+1299-           unsigned long, vlen, loff_t, pos)
+1300-{
+1301-   return do_compat_preadv64(fd, vec, vlen, pos, 0);
+1302-}
+1303-#endif
+1304-
+1305-COMPAT_SYSCALL_DEFINE5(preadv, compat_ulong_t, fd,
+1306-           const struct compat_iovec __user *,vec,
+1307-           compat_ulong_t, vlen, u32, pos_low, u32, pos_high)
+1308-{
+1309-   loff_t pos = ((loff_t)pos_high << 32) | pos_low;
+1310-
+1311-   return do_compat_preadv64(fd, vec, vlen, pos, 0);
+1312-}
+1313-
+1314-#ifdef __ARCH_WANT_COMPAT_SYS_PREADV64V2
+1315-COMPAT_SYSCALL_DEFINE5(preadv64v2, unsigned long, fd,
+root@hakdog:~/oscar# grep -n -A55 -B10 "vfs_fstatat" fs/stat.c
+357-    return cp_new_stat(&stat, statbuf);
+358-}
+359-
+360-#if !defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_SYS_NEWFSTATAT)
+361-SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,
+362-            struct stat __user *, statbuf, int, flag)
+363-{
+364-    struct kstat stat;
+365-    int error;
+366-
+367:    error = vfs_fstatat(dfd, filename, &stat, flag);
+368-    if (error)
+369-            return error;
+370-    return cp_new_stat(&stat, statbuf);
+371-}
+372-#endif
+373-
+374-SYSCALL_DEFINE2(newfstat, unsigned int, fd, struct stat __user *, statbuf)
+375-{
+376-    struct kstat stat;
+377-    int error = vfs_fstat(fd, &stat);
+378-
+379-    if (!error)
+380-            error = cp_new_stat(&stat, statbuf);
+381-
+382-    return error;
+383-}
+384-#endif
+385-
+386-static int do_readlinkat(int dfd, const char __user *pathname,
+387-                     char __user *buf, int bufsiz)
+388-{
+389-    struct path path;
+390-    int error;
+391-    int empty = 0;
+392-    unsigned int lookup_flags = LOOKUP_EMPTY;
+393-
+394-    if (bufsiz <= 0)
+395-            return -EINVAL;
+396-
+397-retry:
+398-    error = user_path_at_empty(dfd, pathname, lookup_flags, &path, &empty);
+399-    if (!error) {
+400-            struct inode *inode = d_backing_inode(path.dentry);
+401-
+402-            error = empty ? -ENOENT : -EINVAL;
+403-            /*
+404-             * AFS mountpoints allow readlink(2) but are not symlinks
+405-             */
+406-            if (d_is_symlink(path.dentry) || inode->i_op->readlink) {
+407-                    error = security_inode_readlink(path.dentry);
+408-                    if (!error) {
+409-                            touch_atime(&path);
+410-                            error = vfs_readlink(path.dentry, buf, bufsiz);
+411-                    }
+412-            }
+413-            path_put(&path);
+414-            if (retry_estale(error, lookup_flags)) {
+415-                    lookup_flags |= LOOKUP_REVAL;
+416-                    goto retry;
+417-            }
+418-    }
+419-    return error;
+420-}
+421-
+422-SYSCALL_DEFINE4(readlinkat, int, dfd, const char __user *, pathname,
+--
+508-
+509-    return error;
+510-}
+511-
+512-SYSCALL_DEFINE4(fstatat64, int, dfd, const char __user *, filename,
+513-            struct stat64 __user *, statbuf, int, flag)
+514-{
+515-    struct kstat stat;
+516-    int error;
+517-
+518:    error = vfs_fstatat(dfd, filename, &stat, flag);
+519-    if (error)
+520-            return error;
+521-    return cp_new_stat64(&stat, statbuf);
+522-}
+523-#endif /* __ARCH_WANT_STAT64 || __ARCH_WANT_COMPAT_STAT64 */
+524-
+525-static noinline_for_stack int
+526-cp_statx(const struct kstat *stat, struct statx __user *buffer)
+527-{
+528-    struct statx tmp;
+529-
+530-    memset(&tmp, 0, sizeof(tmp));
+531-
+532-    tmp.stx_mask = stat->result_mask;
+533-    tmp.stx_blksize = stat->blksize;
+534-    tmp.stx_attributes = stat->attributes;
+535-    tmp.stx_nlink = stat->nlink;
+536-    tmp.stx_uid = from_kuid_munged(current_user_ns(), stat->uid);
+537-    tmp.stx_gid = from_kgid_munged(current_user_ns(), stat->gid);
+538-    tmp.stx_mode = stat->mode;
+539-    tmp.stx_ino = stat->ino;
+540-    tmp.stx_size = stat->size;
+541-    tmp.stx_blocks = stat->blocks;
+542-    tmp.stx_attributes_mask = stat->attributes_mask;
+543-    tmp.stx_atime.tv_sec = stat->atime.tv_sec;
+544-    tmp.stx_atime.tv_nsec = stat->atime.tv_nsec;
+545-    tmp.stx_btime.tv_sec = stat->btime.tv_sec;
+546-    tmp.stx_btime.tv_nsec = stat->btime.tv_nsec;
+547-    tmp.stx_ctime.tv_sec = stat->ctime.tv_sec;
+548-    tmp.stx_ctime.tv_nsec = stat->ctime.tv_nsec;
+549-    tmp.stx_mtime.tv_sec = stat->mtime.tv_sec;
+550-    tmp.stx_mtime.tv_nsec = stat->mtime.tv_nsec;
+551-    tmp.stx_rdev_major = MAJOR(stat->rdev);
+552-    tmp.stx_rdev_minor = MINOR(stat->rdev);
+553-    tmp.stx_dev_major = MAJOR(stat->dev);
+554-    tmp.stx_dev_minor = MINOR(stat->dev);
+555-
+556-    return copy_to_user(buffer, &tmp, sizeof(tmp)) ? -EFAULT : 0;
+557-}
+558-
+559-/**
+560- * sys_statx - System call to get enhanced stats
+561- * @dfd: Base directory to pathwalk from *or* fd to stat.
+562- * @filename: File to stat or "" with AT_EMPTY_PATH
+563- * @flags: AT_* flags to control pathwalk.
+564- * @mask: Parts of statx struct actually required.
+565- * @buffer: Result buffer.
+566- *
+567- * Note that fstat() can be emulated by setting dfd to the fd of interest,
+568- * supplying "" as the filename and setting AT_EMPTY_PATH in the flags.
+569- */
+570-SYSCALL_DEFINE5(statx,
+571-            int, dfd, const char __user *, filename, unsigned, flags,
+572-            unsigned int, mask,
+573-            struct statx __user *, buffer)
+--
+648-}
+649-
+650-#ifndef __ARCH_WANT_STAT64
+651-COMPAT_SYSCALL_DEFINE4(newfstatat, unsigned int, dfd,
+652-                   const char __user *, filename,
+653-                   struct compat_stat __user *, statbuf, int, flag)
+654-{
+655-    struct kstat stat;
+656-    int error;
+657-
+658:    error = vfs_fstatat(dfd, filename, &stat, flag);
+659-    if (error)
+660-            return error;
+661-    return cp_compat_stat(&stat, statbuf);
+662-}
+663-#endif
+664-
+665-COMPAT_SYSCALL_DEFINE2(newfstat, unsigned int, fd,
+666-                   struct compat_stat __user *, statbuf)
+667-{
+668-    struct kstat stat;
+669-    int error = vfs_fstat(fd, &stat);
+670-
+671-    if (!error)
+672-            error = cp_compat_stat(&stat, statbuf);
+673-    return error;
+674-}
+675-#endif
+676-
+677-/* Caller is here responsible for sufficient locking (ie. inode->i_lock) */
+678-void __inode_add_bytes(struct inode *inode, loff_t bytes)
+679-{
+680-    inode->i_blocks += bytes >> 9;
+681-    bytes &= 511;
+682-    inode->i_bytes += bytes;
+683-    if (inode->i_bytes >= 512) {
+684-            inode->i_blocks++;
+685-            inode->i_bytes -= 512;
+686-    }
+687-}
+688-EXPORT_SYMBOL(__inode_add_bytes);
+689-
+690-void inode_add_bytes(struct inode *inode, loff_t bytes)
+691-{
+692-    spin_lock(&inode->i_lock);
+693-    __inode_add_bytes(inode, bytes);
+694-    spin_unlock(&inode->i_lock);
+695-}
+696-
+697-EXPORT_SYMBOL(inode_add_bytes);
+698-
+699-void __inode_sub_bytes(struct inode *inode, loff_t bytes)
+700-{
+701-    inode->i_blocks -= bytes >> 9;
+702-    bytes &= 511;
+703-    if (inode->i_bytes < bytes) {
+704-            inode->i_blocks--;
+705-            inode->i_bytes += 512;
+706-    }
+707-    inode->i_bytes -= bytes;
+708-}
+709-
+710-EXPORT_SYMBOL(__inode_sub_bytes);
+711-
+712-void inode_sub_bytes(struct inode *inode, loff_t bytes)
+713-{
+root@hakdog:~/oscar# grep -n -A45 -B10 "SYSCALL_DEFINE4(reboot" kernel/reboot.c
+303-DEFINE_MUTEX(system_transition_mutex);
+304-
+305-/*
+306- * Reboot system call: for obvious reasons only root may call it,
+307- * and even root needs to set up some magic numbers in the registers
+308- * so that some mistake won't make this reboot the whole machine.
+309- * You can also set the meaning of the ctrl-alt-del-key here.
+310- *
+311- * reboot doesn't sync: do that yourself before calling this.
+312- */
+313:SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
+314-            void __user *, arg)
+315-{
+316-    struct pid_namespace *pid_ns = task_active_pid_ns(current);
+317-    char buffer[256];
+318-    int ret = 0;
+319-
+320-    /* We only trust the superuser with rebooting the system. */
+321-    if (!ns_capable(pid_ns->user_ns, CAP_SYS_BOOT))
+322-            return -EPERM;
+323-
+324-    /* For safety, we require "magic" arguments. */
+325-    if (magic1 != LINUX_REBOOT_MAGIC1 ||
+326-                    (magic2 != LINUX_REBOOT_MAGIC2 &&
+327-                    magic2 != LINUX_REBOOT_MAGIC2A &&
+328-                    magic2 != LINUX_REBOOT_MAGIC2B &&
+329-                    magic2 != LINUX_REBOOT_MAGIC2C))
+330-            return -EINVAL;
+331-
+332-    /*
+333-     * If pid namespaces are enabled and the current task is in a child
+334-     * pid_namespace, the command is handled by reboot_pid_ns() which will
+335-     * call do_exit().
+336-     */
+337-    ret = reboot_pid_ns(pid_ns, cmd);
+338-    if (ret)
+339-            return ret;
+340-
+341-    /* Instead of trying to make the power_off code look like
+342-     * halt when pm_power_off is not set do it the easy way.
+343-     */
+344-    if ((cmd == LINUX_REBOOT_CMD_POWER_OFF) && !pm_power_off)
+345-            cmd = LINUX_REBOOT_CMD_HALT;
+346-
+347-    mutex_lock(&system_transition_mutex);
+348-    switch (cmd) {
+349-    case LINUX_REBOOT_CMD_RESTART:
+350-            kernel_restart(NULL);
+351-            break;
+352-
+353-    case LINUX_REBOOT_CMD_CAD_ON:
+354-            C_A_D = 1;
+355-            break;
+356-
+357-    case LINUX_REBOOT_CMD_CAD_OFF:
+358-            C_A_D = 0;
+root@hakdog:~/oscar# grep -n -A80 -B5 "fs/open.c)" ../Patches/susfs_inline_hook_patches.sh
+59-        fi
+60-
+61-        echo "======================================"
+62-        ;;
+63-    ## open.c
+64:    fs/open.c)
+65-        sed -i '/#include <linux\/compat.h>/a #ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#endif' fs/open.c
+66-
+67-        if ! grep -q "internal.h" "fs/stat.c" && ! grep "static int filename_lookup" "fs/namei.c"; then
+68-            sed -i '/#include <linux\/compat.h>/a\#include "internal.h"' fs/stat.c
+69-        fi
+70-
+71-        if grep -q "do_faccessat" "fs/open.c" >/dev/null 2>&1; then
+72-            if grep -q "static int filename_lookup" "fs/namei.c" ; then
+73-                sed -i '/long do_faccessat(int dfd, const char __user \*filename, int mode)/i #ifdef CONFIG_KSU_SUSFS\nextern struct static_key_true ksu_su_compat_enabled;\nextern bool __ksu_is_allow_uid_for_current(uid_t uid);\nextern int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode,\n\t\t\tint *flags);\nextern int filename_lookup(int dfd, struct filename *name, unsigned flags,\n\t\t\t\tstruct path *path, struct path *root);\n#endif' fs/open.c
+74-            else
+75-                sed -i '/long do_faccessat(int dfd, const char __user \*filename, int mode)/i #ifdef CONFIG_KSU_SUSFS\nextern struct static_key_true ksu_su_compat_enabled;\nextern bool __ksu_is_allow_uid_for_current(uid_t uid);\nextern int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode,\n\t\t\tint *flags);\n#endif' fs/open.c
+76-            fi
+77-
+78-        else
+79-            if grep -q "static int filename_lookup" "fs/namei.c" ; then
+80-                sed -i '/SYSCALL_DEFINE3(faccessat/i #ifdef CONFIG_KSU_SUSFS\nextern struct static_key_true ksu_su_compat_enabled;\nextern bool __ksu_is_allow_uid_for_current(uid_t uid);\nextern int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode,\n             int *flags);\nextern int filename_lookup(int dfd, struct filename *name, unsigned flags,\n\t\t\t\tstruct path *path, struct path *root);\n#endif' fs/open.c
+81-            else
+82-                sed -i '/SYSCALL_DEFINE3(faccessat/i #ifdef CONFIG_KSU_SUSFS\nextern struct static_key_true ksu_su_compat_enabled;\nextern bool __ksu_is_allow_uid_for_current(uid_t uid);\nextern int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode,\n             int *flags);\n#endif' fs/open.c
+83-            fi
+84-
+85-        fi
+86-        sed -i '/if (mode & ~S_IRWXO)/i\#ifdef CONFIG_KSU_SUSFS\n\tstruct filename *fname = NULL;\n#endif\n' fs/open.c
+87-        sed -i '/res = user_path_at(dfd, filename, lookup_flags, \&path);/i\#ifdef CONFIG_KSU_SUSFS\n\tfname = getname_flags(filename, lookup_flags, NULL);\n\n\tif (likely(susfs_is_current_proc_no_su()))\n\t\tgoto orig_flow;\n\n\tif (static_branch_likely(\&ksu_su_compat_enabled)) {\n\t\tif (unlikely(__ksu_is_allow_uid_for_current(current_uid().val)))\n\t\t\tksu_handle_faccessat(\&dfd, \&fname, \&mode, NULL);\n\t}\n\norig_flow:\n\tres = filename_lookup(dfd, fname, lookup_flags, \&path, NULL);\n\t\/\/ no putname(fname) here as filename_lookup() has it done for us already;\n#else' fs/open.c
+88-        sed -i '/res = user_path_at(dfd, filename, lookup_flags, \&path);/a\#endif' fs/open.c
+89-
+90-        if grep -q "ksu_handle_faccessat" "fs/open.c"; then
+91-            echo "[+] fs/open.c Patched!"
+92-            echo "[+] Count: $(grep -c "ksu_handle_faccessat" "fs/open.c")"
+93-        else
+94-            echo "[-] fs/open.c patch failed for unknown reasons, please provide feedback in time."
+95-        fi
+96-
+97-        echo "======================================"
+98-        ;;
+99-    ## read_write.c
+100-    fs/read_write.c)
+101-        sed -i '/SYSCALL_DEFINE3(read,/i #ifdef CONFIG_KSU\nextern struct static_key_true ksu_is_init_rc_hook_enabled;\nextern __attribute__((cold)) int ksu_handle_sys_read(unsigned int fd);\n#endif' fs/read_write.c
+102-        if grep -q "ksys_read" "fs/read_write.c" >/dev/null 2>&1; then
+103-            sed -i '/return ksys_read(fd, buf, count);/i #ifdef CONFIG_KSU\n\tif (static_branch_unlikely(\&ksu_is_init_rc_hook_enabled))\n\t\tksu_handle_sys_read(fd);\n#endif' fs/read_write.c
+104-        else
+105-            sed -i '0,/if (f\.file) {/{s/if (f\.file) {/\n#ifdef CONFIG_KSU\n\tif (static_branch_unlikely(\&ksu_is_init_rc_hook_enabled))\n\t\tksu_handle_sys_read(fd);\n#endif\n\tif (f.file) {/}' fs/read_write.c
+106-        fi
+107-
+108-        if grep -q "ksu_init_rc_hook" "fs/read_write.c"; then
+109-            echo "[+] fs/read_write.c Patched!"
+110-            echo "[+] Count: $(grep -c "ksu_init_rc_hook" "fs/read_write.c")"
+111-        elif grep -q "ksu_handle_sys_read" "fs/read_write.c"; then
+112-            echo "[+] fs/read_write.c Patched!"
+113-            echo "[+] Count: $(grep -c "ksu_handle_sys_read" "fs/read_write.c")"
+114-        else
+115-            echo "[-] fs/read_write.c patch failed for unknown reasons, please provide feedback in time."
+116-        fi
+117-
+118-        echo "======================================"
+119-        ;;
+120-    ## stat.c
+121-    fs/stat.c)
+122-        if grep -q "unistd" "fs/stat.c"; then
+123-            sed -i '/#include <asm\/unistd.h>/a\#ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#include "mount.h"\n#endif\n#ifdef CONFIG_KSU_SUSFS\nextern struct static_key_true ksu_is_init_rc_hook_enabled;\nextern void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr);\nextern struct static_key_true ksu_su_compat_enabled;\nextern bool __ksu_is_allow_uid_for_current(uid_t uid);\nextern int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);\n#endif \/\/ #ifdef CONFIG_KSU_SUSFS' fs/stat.c
+124-        elif grep -q "vmalloc.h" "fs/stat.c"; then
+125-            sed -i '/#include <linux\/vmalloc.h>/a\#ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#include "mount.h"\n#endif\n#ifdef CONFIG_KSU_SUSFS\nextern struct static_key_true ksu_is_init_rc_hook_enabled;\nextern void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr);\nextern struct static_key_true ksu_su_compat_enabled;\nextern bool __ksu_is_allow_uid_for_current(uid_t uid);\nextern int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);\n#endif \/\/ #ifdef CONFIG_KSU_SUSFS' fs/stat.c
+126-        else
+127-            sed -i '/#include <asm\/uaccess.h>/a\#ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#include "mount.h"\n#endif\n#ifdef CONFIG_KSU_SUSFS\nextern struct static_key_true ksu_is_init_rc_hook_enabled;\nextern void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr);\nextern struct static_key_true ksu_su_compat_enabled;\nextern bool __ksu_is_allow_uid_for_current(uid_t uid);\nextern int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);\n#endif \/\/ #ifdef CONFIG_KSU_SUSFS' fs/stat.c
+128-        fi
+129-
+130-        if ! grep -q "internal.h" "fs/stat.c" && ! grep "static int filename_lookup" "fs/namei.c"; then
+131-            sed -i '/#include <asm\/unistd.h>/a\#include "internal.h"' fs/stat.c
+132-        fi
+133-
+134-        if grep -q "static int filename_lookup" "fs/namei.c" ; then
+135-            sed -i '/if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |/i\#ifdef CONFIG_KSU_SUSFS\n\tstruct filename *fname = NULL;\nextern int filename_lookup(int dfd, struct filename *name, unsigned flags,\n\t\t\t\tstruct path *path, struct path *root);\n#endif\n' fs/stat.c
+136-        else
+137-            sed -i '/if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |/i\#ifdef CONFIG_KSU_SUSFS\n\tstruct filename *fname = NULL;\n#endif\n' fs/stat.c
+138-        fi
+139-        sed -i '/error = user_path_at(dfd, filename, lookup_flags, \&path);/i\#ifdef CONFIG_KSU_SUSFS\n\tfname = getname_flags(filename, lookup_flags, NULL);\n\n\tif (likely(susfs_is_current_proc_no_su()))\n\t\tgoto orig_flow;\n\n\tif (static_branch_likely(\&ksu_su_compat_enabled)) {\n\t\tif (unlikely(__ksu_is_allow_uid_for_current(current_uid().val)))\n\t\t\tksu_handle_stat(\&dfd, \&fname, \&flags);\n\t}\n\norig_flow:\n\terror = filename_lookup(dfd, fname, lookup_flags, \&path, NULL);\n\t\/\/ no putname(fname) here as filename_lookup() has it done for us already;\n#else' fs/stat.c
+140-        sed -i '/error = user_path_at(dfd, filename, lookup_flags, \&path);/a\#endif' fs/stat.c
+141-        sed -i '/fdput(f);/i\#ifdef CONFIG_KSU_SUSFS\n\t\tif (static_branch_unlikely(\&ksu_is_init_rc_hook_enabled))\n\t\t\tksu_handle_vfs_fstat(fd, \&stat->size);\n#endif \/\/ #ifdef CONFIG_KSU_SUSFS\n' fs/stat.c
+142-
+143-        if grep -q "ksu_handle_stat" "fs/stat.c"; then
+144-            echo "[+] fs/stat.c Patched!"
+root@hakdog:~/oscar# grep -n -A80 -B5 "fs/read_write.c)" ../Patches/susfs_inline_hook_patches.sh
+95-        fi
+96-
+97-        echo "======================================"
+98-        ;;
+99-    ## read_write.c
+100:    fs/read_write.c)
+101-        sed -i '/SYSCALL_DEFINE3(read,/i #ifdef CONFIG_KSU\nextern struct static_key_true ksu_is_init_rc_hook_enabled;\nextern __attribute__((cold)) int ksu_handle_sys_read(unsigned int fd);\n#endif' fs/read_write.c
+102-        if grep -q "ksys_read" "fs/read_write.c" >/dev/null 2>&1; then
+103-            sed -i '/return ksys_read(fd, buf, count);/i #ifdef CONFIG_KSU\n\tif (static_branch_unlikely(\&ksu_is_init_rc_hook_enabled))\n\t\tksu_handle_sys_read(fd);\n#endif' fs/read_write.c
+104-        else
+105-            sed -i '0,/if (f\.file) {/{s/if (f\.file) {/\n#ifdef CONFIG_KSU\n\tif (static_branch_unlikely(\&ksu_is_init_rc_hook_enabled))\n\t\tksu_handle_sys_read(fd);\n#endif\n\tif (f.file) {/}' fs/read_write.c
+106-        fi
+107-
+108-        if grep -q "ksu_init_rc_hook" "fs/read_write.c"; then
+109-            echo "[+] fs/read_write.c Patched!"
+110-            echo "[+] Count: $(grep -c "ksu_init_rc_hook" "fs/read_write.c")"
+111-        elif grep -q "ksu_handle_sys_read" "fs/read_write.c"; then
+112-            echo "[+] fs/read_write.c Patched!"
+113-            echo "[+] Count: $(grep -c "ksu_handle_sys_read" "fs/read_write.c")"
+114-        else
+115-            echo "[-] fs/read_write.c patch failed for unknown reasons, please provide feedback in time."
+116-        fi
+117-
+118-        echo "======================================"
+119-        ;;
+120-    ## stat.c
+121-    fs/stat.c)
+122-        if grep -q "unistd" "fs/stat.c"; then
+123-            sed -i '/#include <asm\/unistd.h>/a\#ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#include "mount.h"\n#endif\n#ifdef CONFIG_KSU_SUSFS\nextern struct static_key_true ksu_is_init_rc_hook_enabled;\nextern void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr);\nextern struct static_key_true ksu_su_compat_enabled;\nextern bool __ksu_is_allow_uid_for_current(uid_t uid);\nextern int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);\n#endif \/\/ #ifdef CONFIG_KSU_SUSFS' fs/stat.c
+124-        elif grep -q "vmalloc.h" "fs/stat.c"; then
+125-            sed -i '/#include <linux\/vmalloc.h>/a\#ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#include "mount.h"\n#endif\n#ifdef CONFIG_KSU_SUSFS\nextern struct static_key_true ksu_is_init_rc_hook_enabled;\nextern void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr);\nextern struct static_key_true ksu_su_compat_enabled;\nextern bool __ksu_is_allow_uid_for_current(uid_t uid);\nextern int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);\n#endif \/\/ #ifdef CONFIG_KSU_SUSFS' fs/stat.c
+126-        else
+127-            sed -i '/#include <asm\/uaccess.h>/a\#ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#include "mount.h"\n#endif\n#ifdef CONFIG_KSU_SUSFS\nextern struct static_key_true ksu_is_init_rc_hook_enabled;\nextern void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr);\nextern struct static_key_true ksu_su_compat_enabled;\nextern bool __ksu_is_allow_uid_for_current(uid_t uid);\nextern int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);\n#endif \/\/ #ifdef CONFIG_KSU_SUSFS' fs/stat.c
+128-        fi
+129-
+130-        if ! grep -q "internal.h" "fs/stat.c" && ! grep "static int filename_lookup" "fs/namei.c"; then
+131-            sed -i '/#include <asm\/unistd.h>/a\#include "internal.h"' fs/stat.c
+132-        fi
+133-
+134-        if grep -q "static int filename_lookup" "fs/namei.c" ; then
+135-            sed -i '/if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |/i\#ifdef CONFIG_KSU_SUSFS\n\tstruct filename *fname = NULL;\nextern int filename_lookup(int dfd, struct filename *name, unsigned flags,\n\t\t\t\tstruct path *path, struct path *root);\n#endif\n' fs/stat.c
+136-        else
+137-            sed -i '/if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |/i\#ifdef CONFIG_KSU_SUSFS\n\tstruct filename *fname = NULL;\n#endif\n' fs/stat.c
+138-        fi
+139-        sed -i '/error = user_path_at(dfd, filename, lookup_flags, \&path);/i\#ifdef CONFIG_KSU_SUSFS\n\tfname = getname_flags(filename, lookup_flags, NULL);\n\n\tif (likely(susfs_is_current_proc_no_su()))\n\t\tgoto orig_flow;\n\n\tif (static_branch_likely(\&ksu_su_compat_enabled)) {\n\t\tif (unlikely(__ksu_is_allow_uid_for_current(current_uid().val)))\n\t\t\tksu_handle_stat(\&dfd, \&fname, \&flags);\n\t}\n\norig_flow:\n\terror = filename_lookup(dfd, fname, lookup_flags, \&path, NULL);\n\t\/\/ no putname(fname) here as filename_lookup() has it done for us already;\n#else' fs/stat.c
+140-        sed -i '/error = user_path_at(dfd, filename, lookup_flags, \&path);/a\#endif' fs/stat.c
+141-        sed -i '/fdput(f);/i\#ifdef CONFIG_KSU_SUSFS\n\t\tif (static_branch_unlikely(\&ksu_is_init_rc_hook_enabled))\n\t\t\tksu_handle_vfs_fstat(fd, \&stat->size);\n#endif \/\/ #ifdef CONFIG_KSU_SUSFS\n' fs/stat.c
+142-
+143-        if grep -q "ksu_handle_stat" "fs/stat.c"; then
+144-            echo "[+] fs/stat.c Patched!"
+145-            echo "[+] Count: $(grep -c "ksu_handle_stat" "fs/stat.c")"
+146-        else
+147-            echo "[-] fs/stat.c patch failed for unknown reasons, please provide feedback in time."
+148-        fi
+149-
+150-        echo "======================================"
+151-        ;;
+152-    ## namei.c
+153-    fs/namei.c)
+154-        if grep "static int filename_lookup" "fs/namei.c" ; then
+155-            sed -i 's/static int filename_lookup(int dfd, struct filename \*name, unsigned flags,/int filename_lookup(int dfd, struct filename *name, unsigned flags,/' fs/namei.c
+156-            echo "[+] fs/namei.c removed static status."
+157-        fi
+158-
+159-        if grep "throne_tracker" "fs/namei.c" >/dev/null 2>&1; then
+160-            echo "[-] Warning: fs/namei.c contains KernelSU"
+161-            echo "[+] Code in here:"
+162-            grep -n "throne_tracker" "fs/namei.c"
+163-            echo "[-] End of file."
+164-        elif [ "$FIRST_VERSION" -lt 4 ] && [ "$SECOND_VERSION" -lt 19 ]; then
+165-            sed -i '/if (unlikely(err)) {/a \#ifdef CONFIG_KSU\n\t\tif (unlikely(strstr(current->comm, "throne_tracker"))) {\n\t\t\terr = -ENOENT;\n\t\t\tgoto out_err;\n\t\t}\n#endif' fs/namei.c
+166-
+167-            if grep -q "throne_tracker" "fs/namei.c"; then
+168-                echo "[+] fs/namei.c Patched!"
+169-                echo "[+] Count: $(grep -c "throne_tracker" "fs/namei.c")"
+170-            else
+171-                echo "[-] fs/namei.c patch failed for unknown reasons, please provide feedback in time."
+172-            fi
+173-        else
+174-            echo "[-] Kernel needn't throne_tracker, Skipped."
+175-        fi
+176-
+177-        echo "======================================"
+178-        ;;
+179-
+180-    # drivers/ changes
+root@hakdog:~/oscar# grep -n -A100 -B5 "fs/stat.c)" ../Patches/susfs_inline_hook_patches.sh
+116-        fi
+117-
+118-        echo "======================================"
+119-        ;;
+120-    ## stat.c
+121:    fs/stat.c)
+122-        if grep -q "unistd" "fs/stat.c"; then
+123-            sed -i '/#include <asm\/unistd.h>/a\#ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#include "mount.h"\n#endif\n#ifdef CONFIG_KSU_SUSFS\nextern struct static_key_true ksu_is_init_rc_hook_enabled;\nextern void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr);\nextern struct static_key_true ksu_su_compat_enabled;\nextern bool __ksu_is_allow_uid_for_current(uid_t uid);\nextern int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);\n#endif \/\/ #ifdef CONFIG_KSU_SUSFS' fs/stat.c
+124-        elif grep -q "vmalloc.h" "fs/stat.c"; then
+125-            sed -i '/#include <linux\/vmalloc.h>/a\#ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#include "mount.h"\n#endif\n#ifdef CONFIG_KSU_SUSFS\nextern struct static_key_true ksu_is_init_rc_hook_enabled;\nextern void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr);\nextern struct static_key_true ksu_su_compat_enabled;\nextern bool __ksu_is_allow_uid_for_current(uid_t uid);\nextern int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);\n#endif \/\/ #ifdef CONFIG_KSU_SUSFS' fs/stat.c
+126-        else
+127-            sed -i '/#include <asm\/uaccess.h>/a\#ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#include "mount.h"\n#endif\n#ifdef CONFIG_KSU_SUSFS\nextern struct static_key_true ksu_is_init_rc_hook_enabled;\nextern void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr);\nextern struct static_key_true ksu_su_compat_enabled;\nextern bool __ksu_is_allow_uid_for_current(uid_t uid);\nextern int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);\n#endif \/\/ #ifdef CONFIG_KSU_SUSFS' fs/stat.c
+128-        fi
+129-
+130-        if ! grep -q "internal.h" "fs/stat.c" && ! grep "static int filename_lookup" "fs/namei.c"; then
+131-            sed -i '/#include <asm\/unistd.h>/a\#include "internal.h"' fs/stat.c
+132-        fi
+133-
+134-        if grep -q "static int filename_lookup" "fs/namei.c" ; then
+135-            sed -i '/if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |/i\#ifdef CONFIG_KSU_SUSFS\n\tstruct filename *fname = NULL;\nextern int filename_lookup(int dfd, struct filename *name, unsigned flags,\n\t\t\t\tstruct path *path, struct path *root);\n#endif\n' fs/stat.c
+136-        else
+137-            sed -i '/if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |/i\#ifdef CONFIG_KSU_SUSFS\n\tstruct filename *fname = NULL;\n#endif\n' fs/stat.c
+138-        fi
+139-        sed -i '/error = user_path_at(dfd, filename, lookup_flags, \&path);/i\#ifdef CONFIG_KSU_SUSFS\n\tfname = getname_flags(filename, lookup_flags, NULL);\n\n\tif (likely(susfs_is_current_proc_no_su()))\n\t\tgoto orig_flow;\n\n\tif (static_branch_likely(\&ksu_su_compat_enabled)) {\n\t\tif (unlikely(__ksu_is_allow_uid_for_current(current_uid().val)))\n\t\t\tksu_handle_stat(\&dfd, \&fname, \&flags);\n\t}\n\norig_flow:\n\terror = filename_lookup(dfd, fname, lookup_flags, \&path, NULL);\n\t\/\/ no putname(fname) here as filename_lookup() has it done for us already;\n#else' fs/stat.c
+140-        sed -i '/error = user_path_at(dfd, filename, lookup_flags, \&path);/a\#endif' fs/stat.c
+141-        sed -i '/fdput(f);/i\#ifdef CONFIG_KSU_SUSFS\n\t\tif (static_branch_unlikely(\&ksu_is_init_rc_hook_enabled))\n\t\t\tksu_handle_vfs_fstat(fd, \&stat->size);\n#endif \/\/ #ifdef CONFIG_KSU_SUSFS\n' fs/stat.c
+142-
+143-        if grep -q "ksu_handle_stat" "fs/stat.c"; then
+144-            echo "[+] fs/stat.c Patched!"
+145-            echo "[+] Count: $(grep -c "ksu_handle_stat" "fs/stat.c")"
+146-        else
+147-            echo "[-] fs/stat.c patch failed for unknown reasons, please provide feedback in time."
+148-        fi
+149-
+150-        echo "======================================"
+151-        ;;
+152-    ## namei.c
+153-    fs/namei.c)
+154-        if grep "static int filename_lookup" "fs/namei.c" ; then
+155-            sed -i 's/static int filename_lookup(int dfd, struct filename \*name, unsigned flags,/int filename_lookup(int dfd, struct filename *name, unsigned flags,/' fs/namei.c
+156-            echo "[+] fs/namei.c removed static status."
+157-        fi
+158-
+159-        if grep "throne_tracker" "fs/namei.c" >/dev/null 2>&1; then
+160-            echo "[-] Warning: fs/namei.c contains KernelSU"
+161-            echo "[+] Code in here:"
+162-            grep -n "throne_tracker" "fs/namei.c"
+163-            echo "[-] End of file."
+164-        elif [ "$FIRST_VERSION" -lt 4 ] && [ "$SECOND_VERSION" -lt 19 ]; then
+165-            sed -i '/if (unlikely(err)) {/a \#ifdef CONFIG_KSU\n\t\tif (unlikely(strstr(current->comm, "throne_tracker"))) {\n\t\t\terr = -ENOENT;\n\t\t\tgoto out_err;\n\t\t}\n#endif' fs/namei.c
+166-
+167-            if grep -q "throne_tracker" "fs/namei.c"; then
+168-                echo "[+] fs/namei.c Patched!"
+169-                echo "[+] Count: $(grep -c "throne_tracker" "fs/namei.c")"
+170-            else
+171-                echo "[-] fs/namei.c patch failed for unknown reasons, please provide feedback in time."
+172-            fi
+173-        else
+174-            echo "[-] Kernel needn't throne_tracker, Skipped."
+175-        fi
+176-
+177-        echo "======================================"
+178-        ;;
+179-
+180-    # drivers/ changes
+181-    ## input/input.c
+182-    drivers/input/input.c)
+183-        sed -i '/^static void input_handle_event(struct input_dev \*dev,/i\#ifdef CONFIG_KSU\nextern struct static_key_true ksu_is_input_hook_enabled;\nextern int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value);\n#endif\n' drivers/input/input.c
+184-        sed -i '/input_get_disposition(dev, type, code, \&value);/a\#ifdef CONFIG_KSU_SUSFS\n\tif (static_branch_unlikely(\&ksu_is_input_hook_enabled))\n\t\tksu_handle_input_handle_event(\&type, \&code, \&value);\n#endif\n' drivers/input/input.c
+185-
+186-        if grep -q "ksu_handle_input_handle_event" "drivers/input/input.c"; then
+187-            echo "[+] drivers/input/input.c Patched!"
+188-            echo "[+] Count: $(grep -c "ksu_handle_input_handle_event" "drivers/input/input.c")"
+189-        else
+190-            echo "[-] drivers/input/input.c patch failed for unknown reasons, please provide feedback in time."
+191-        fi
+192-
+193-        echo "======================================"
+194-        ;;
+195-
+196-    # security/ changes
+197-    ## security.c
+198-    security/security.c)
+199-        if [ "$FIRST_VERSION" -lt 4 ] && [ "$SECOND_VERSION" -lt 19 ]; then
+200-            sed -i '/int security_binder_set_context_mgr(struct task_struct/i \#ifdef CONFIG_KSU\n\extern int ksu_bprm_check(struct linux_binprm *bprm);\n\extern int ksu_handle_rename(struct dentry *old_dentry, struct dentry *new_dentry);\n\extern int ksu_handle_setuid(struct cred *new, const struct cred *old);\n\#endif' security/security.c
+201-            sed -i '/ret = security_ops->bprm_check_security(bprm);/i \#ifdef CONFIG_KSU\n\tksu_bprm_check(bprm);\n\#endif' security/security.c
+202-            sed -i '/if (unlikely(IS_PRIVATE(old_dentry->d_inode) ||/i \#ifdef CONFIG_KSU\n\tksu_handle_rename(old_dentry, new_dentry);\n\#endif' security/security.c
+203-            sed -i '/return security_ops->task_fix_setuid(new, old, flags);/i \#ifdef CONFIG_KSU\n\tksu_handle_setuid(new, old);\n\#endif' security/security.c
+204-
+205-            if grep -q "ksu_handle_setuid" "security/security.c"; then
+206-                echo "[+] security/security.c Patched!"
+207-                echo "[+] Count: $(grep -c "ksu_handle_setuid" "security/security.c")"
+208-            else
+209-                echo "[-] security/security.c patch failed for unknown reasons, please provide feedback in time."
+210-            fi
+211-        else
+212-            echo "[-] Kernel needn't setuid, Skipped."
+213-        fi
+214-
+215-        echo "======================================"
+216-        ;;
+217-    ## selinux/hooks.c
+218-    security/selinux/hooks.c)
+219-        if grep "security_secid_to_secctx" "security/selinux/hooks.c"; then
+220-            echo "[-] Detected security_secid_to_secctx existed, security/selinux/hooks.c Patched!"
+221-        else
+root@hakdog:~/oscar#
