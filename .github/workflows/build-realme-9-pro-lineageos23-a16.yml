@@ -1,4 +1,4 @@
-name: Build Nothing Phone 1 (LineageOS 23.2 A16)
+name: Build Realme 9 Pro (LineageOS 23.2 A16)
 
 on:
   workflow_call:
